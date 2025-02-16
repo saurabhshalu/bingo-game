@@ -9,17 +9,17 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.jsx";
 import { Container } from "@mui/material";
-import { BrowserRouter } from "react-router";
+import { HashRouter } from "react-router";
 import { Toaster } from "react-hot-toast";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <BrowserRouter>
+    <HashRouter>
       <CssBaseline />
       <Container className="text-center bg-[#242424] min-h-[100vh]">
         <App />
       </Container>
       <Toaster />
-    </BrowserRouter>
+    </HashRouter>
   </StrictMode>
 );
