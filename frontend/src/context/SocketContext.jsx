@@ -119,7 +119,7 @@ const SocketContextProvider = ({ children }) => {
 
   useEffect(() => {
     if (started && players.length === 1) {
-      window.location.reload();
+      window.location.href = "/";
     }
   }, [started, players]);
 
