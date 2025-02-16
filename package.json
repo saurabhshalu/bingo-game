@@ -1,0 +1,21 @@
+{
+  "name": "bingo-game",
+  "version": "1.0.0",
+  "description": "",
+  "main": "bingoApp.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon --ignore ./frontend bingoApp.js"
+  },
+  "author": "Saurabh Verma",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.21.2",
+    "nanoid": "^5.0.9",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "localtunnel": "^2.0.2",
+    "nodemon": "^3.1.9"
+  }
+}
