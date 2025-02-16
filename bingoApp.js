@@ -3,15 +3,20 @@ import http from 'http';
 import { Server } from 'socket.io';
 import { BingoGame } from './game.js';
 import { randomRoomId } from './helper.js';
+import { fileURLToPath } from 'url';
+import path from 'path';
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server();
 io.listen(server);
 
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+app.use(express.static(path.join(__dirname, "build")));
+app.use(express.static("public"));
 
 const ROOMS = {}
 const SOCKET_ROOM_MAPPING = {}
@@ -208,9 +213,5 @@ io.on('connection', (socket) => {
 
 
 
-app.get('/', (req, res) => {
-    return res.json({ success: true })
-})
 
-
-server.listen(6969, console.log(`Server started on port: 6969`))
+server.listen(3005, console.log(`Server started on port: 3005`))

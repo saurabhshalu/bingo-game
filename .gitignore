@@ -2,3 +2,5 @@ node_modules
 frontend/node_modules
 .env
 .vscode
+build
+*.DS_Store
