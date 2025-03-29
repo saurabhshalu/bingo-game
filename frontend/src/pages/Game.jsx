@@ -9,7 +9,8 @@ import { Avatar, Badge, Tooltip } from "@mui/material";
 import toast from "react-hot-toast";
 import playLogo from "/play.svg";
 import restartLogo from "/restart.svg";
-import { getGameOverMessage } from "../helper";
+import { getGameOverMessage, soloWinnerMessages } from "../helper";
+import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 
 const getCorrectAnswerList = (size = 5) => {
   const answers = {
@@ -228,10 +229,15 @@ const Game = () => {
             />
           </div>
         )}
-        {GAME_OVER_MESSAGE && (
+        {!GAME_OVER_MESSAGE && (
           <div className="absolute top-0 left-0 h-full w-full bg-[rgba(0,0,0,0.5)] flex items-center justify-center backdrop-blur-xs flex-col">
             <div className="englebert-regular pt-4 pb-2 pr-4 pl-4 rounded-md bg-neutral-50 text-neutral-900 font-bold text-xl m-4">
-              {GAME_OVER_MESSAGE}
+              <DotLottieReact
+                src="https://lottie.host/4a539643-9f47-4dd9-81e0-4d463f518170/VFNR0kzAA6.lottie"
+                loop
+                autoplay
+              />
+              {GAME_OVER_MESSAGE || soloWinnerMessages[5]}
             </div>
             <div>
               <Tooltip title="Restart">

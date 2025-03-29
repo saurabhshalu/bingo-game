@@ -1,4 +1,4 @@
-const soloWinnerMessages = [
+export const soloWinnerMessages = [
     "🎉 BINGO! You are the one and only champion this round!",
     "🏆 You won! Everyone else was just a spectator in your Bingo greatness!",
     "🔥 First place! You snatched the Bingo crown before anyone else!",

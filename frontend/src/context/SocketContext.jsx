@@ -100,9 +100,10 @@ const SocketContextProvider = ({ children }) => {
       setWinners(winners);
     });
 
-    socket.on("play-restart", ({ myBoard, selection }) => {
+    socket.on("play-restart", ({ myBoard, selection, currentPlayer }) => {
       setBoard(myBoard);
       setSelection(selection);
+      setCurrentPlayer(currentPlayer);
       setWinners([]);
     });
 

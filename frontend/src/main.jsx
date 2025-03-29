@@ -19,7 +19,7 @@ createRoot(document.getElementById("root")).render(
       <Container className="text-center bg-[#242424] min-h-[100vh]">
         <App />
       </Container>
-      <Toaster />
+      <Toaster toastOptions={{ duration: 2000 }} />
     </HashRouter>
   </StrictMode>
 );
