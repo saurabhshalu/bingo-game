@@ -161,12 +161,12 @@ io.on('connection', (socket) => {
         if (myRoom.owner !== socket.id) {
             return socket.emit('error', { message: "Only owner can restart the game" })
         }
-
+        myRoom.currentPlayer = (myRoom.currentPlayer + 1) % myRoom.players.length;
         myRoom.game.restart();
         myRoom.players.forEach((player, index) => {
             const board = myRoom.game.prepareBlankChart();
             myRoom.players[index].board = board;
-            io.to(player.id).emit('play-restart', ({ myBoard: board, selection: myRoom.game.USER_SELECTION }))
+            io.to(player.id).emit('play-restart', ({ myBoard: board, selection: myRoom.game.USER_SELECTION, currentPlayer: myRoom.players[myRoom.currentPlayer].id }))
         })
     })
 
