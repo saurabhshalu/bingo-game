@@ -1,7 +1,7 @@
 
 import { customAlphabet } from 'nanoid';
 const alphabet = '0123456789';
-export const randomRoomId = customAlphabet(alphabet, 4);
+export const randomRoomId = customAlphabet(alphabet, 6);
 
 export const shuffle = (array) => {
     var m = array.length, t, i;
