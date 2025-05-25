@@ -1,4 +1,3 @@
-// import { useMemo } from "react";
 import PropTypes from "prop-types";
 import Block from "../components/Block";
 import { useContext, useMemo } from "react";
@@ -8,8 +7,7 @@ import { motion } from "motion/react";
 import { Avatar, Badge, Tooltip } from "@mui/material";
 import toast from "react-hot-toast";
 import playLogo from "/play.svg";
-import restartLogo from "/restart.svg";
-import { getGameOverMessage } from "../helper";
+import GameOver from "../components/GameOver";
 
 const getCorrectAnswerList = (size = 5) => {
   const answers = {
@@ -50,13 +48,6 @@ const Game = () => {
     () => Math.floor(Math.sqrt(Object.keys(selection).length)),
     [selection]
   );
-
-  const GAME_OVER_MESSAGE = useMemo(() => {
-    return getGameOverMessage(
-      winners.length,
-      winners.some((winner) => winner.id === socketRef.current.id)
-    );
-  }, [socketRef, winners]);
 
   const CORRECT_ANSWER_LIST = useMemo(() => getCorrectAnswerList(size), [size]);
 
@@ -228,25 +219,7 @@ const Game = () => {
             />
           </div>
         )}
-        {GAME_OVER_MESSAGE && (
-          <div className="absolute top-0 left-0 h-full w-full bg-[rgba(0,0,0,0.5)] flex items-center justify-center backdrop-blur-xs flex-col">
-            <div className="englebert-regular pt-4 pb-2 pr-4 pl-4 rounded-md bg-neutral-50 text-neutral-900 font-bold text-xl m-4">
-              {GAME_OVER_MESSAGE}
-            </div>
-            <div>
-              <Tooltip title="Restart">
-                <motion.img
-                  onClick={handleRestart}
-                  whileHover={{ scale: 1.2 }}
-                  whileTap={{ scale: 0.8 }}
-                  src={restartLogo}
-                  alt="restart"
-                  className="h-24 w-24 cursor-pointer"
-                />
-              </Tooltip>
-            </div>
-          </div>
-        )}
+        <GameOver handleRestart={handleRestart} />
       </div>
     </motion.main>
   );
