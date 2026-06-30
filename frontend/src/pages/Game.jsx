@@ -43,6 +43,7 @@ const Game = () => {
     currentPlayer,
     started,
     winners,
+    gameCount
   } = useContext(SocketContext);
   const size = useMemo(
     () => Math.floor(Math.sqrt(Object.keys(selection).length)),
@@ -133,8 +134,9 @@ const Game = () => {
           </span>
           <span> Extended</span>
         </h1>
-        <div style={{ fontFamily: "monospace" }} className="text-amber-100">
-          {roomId}
+        <div style={{ fontFamily: "monospace" }} className="text-amber-100 flex gap-5 text-center justify-center">
+           <div><span>RoomId:</span><span>{roomId}</span></div>
+           <div><span>Game Count:</span><span>{gameCount}</span></div>
         </div>
       </div>
       <div className="flex gap-2 max-w-2xl w-full">

@@ -39,7 +39,8 @@ const joinRoom = (socket, roomId, player) => {
         roomId,
         players: myRoom.players.map(i => ({ name: i.name, win: i.win, id: i.id })),
         selection: myRoom.game.USER_SELECTION,
-        currentPlayer: myRoom.players[myRoom.currentPlayer].id
+        currentPlayer: myRoom.players[myRoom.currentPlayer].id,
+        gameCount: myRoom.gameCount,
     })
     socket.emit('my-board', myBoard);
 }
@@ -81,7 +82,9 @@ io.on('connection', (socket) => {
             max: player.maxPlayers || 5,
             owner: socket.id,
             started: false,
-            currentPlayer: 0
+            currentPlayer: 0,
+            finished: false,
+            gameCount: 0
         }
 
         joinRoom(socket, roomId, player);
@@ -111,12 +114,18 @@ io.on('connection', (socket) => {
         if (!myRoom) {
             return socket.emit('error', { message: "Room not found, please join again" })
         }
+        if (myRoom.finished) {
+            return socket.emit('error', { message: 'Game already finished' });
+        }
         if (!myRoom.started) {
             return socket.emit('error', { message: "The game has not started yet" })
         }
 
         if (myRoom.players[myRoom.currentPlayer]?.id !== socket.id) {
             return socket.emit('error', { message: 'Wait for your turn please' })
+        }
+        if (myRoom.game.USER_SELECTION[number]) {
+            return socket.emit('error', { message: 'Number already played' });
         }
         const validPlay = myRoom.game.play(number);
         if (!validPlay) {
@@ -126,10 +135,13 @@ io.on('connection', (socket) => {
         const winners = getWinners(myRoom);
 
         if (winners.length > 0) {
+            myRoom.finished = true;
+            myRoom.gameCount += 1;
             return io.to(roomId).emit('game-over', {
                 winners: winners.map(i => ({ id: i.id, name: i.name, win: i.win })),
                 players: Object.values(myRoom.players).map(i => ({ name: i.name, win: i.win, id: i.id })),
-                selection: myRoom.game.USER_SELECTION
+                selection: myRoom.game.USER_SELECTION,
+                gameCount: myRoom.gameCount,
             })
         }
         myRoom.currentPlayer = (myRoom.currentPlayer + 1) % myRoom.players.length;
@@ -144,6 +156,9 @@ io.on('connection', (socket) => {
     socket.on('playStart', () => {
         const roomId = SOCKET_ROOM_MAPPING[socket.id];
         const myRoom = ROOMS[roomId];
+        if (myRoom.started) {
+            return socket.emit('error', { message: 'Game already started' });
+        }
         if (myRoom.owner !== socket.id) {
             return socket.emit('error', { message: "Only owner can start the game" })
         }
@@ -161,12 +176,17 @@ io.on('connection', (socket) => {
         if (myRoom.owner !== socket.id) {
             return socket.emit('error', { message: "Only owner can restart the game" })
         }
+        // Ensure index is valid first
+        myRoom.currentPlayer = myRoom.currentPlayer % myRoom.players.length;
+        // Then rotate turn
         myRoom.currentPlayer = (myRoom.currentPlayer + 1) % myRoom.players.length;
+
+        myRoom.finished = false;
         myRoom.game.restart();
         myRoom.players.forEach((player, index) => {
             const board = myRoom.game.prepareBlankChart();
             myRoom.players[index].board = board;
-            io.to(player.id).emit('play-restart', ({ myBoard: board, selection: myRoom.game.USER_SELECTION, currentPlayer: myRoom.players[myRoom.currentPlayer].id }))
+            io.to(player.id).emit('play-restart', ({ myBoard: board, selection: myRoom.game.USER_SELECTION, currentPlayer: myRoom.players[myRoom.currentPlayer].id, gameCount: myRoom.gameCount }))
         })
     })
 
@@ -178,40 +198,58 @@ io.on('connection', (socket) => {
             return;
         }
 
-        const leftPlayer = myRoom.players.find(p => p.id === socket.id);
+        const oldPlayers = myRoom.players;
+        const leftIndex = oldPlayers.findIndex(p => p.id === socket.id);
+        const leftPlayer = oldPlayers[leftIndex];
 
-        let currentPlayerId = myRoom.players[myRoom.currentPlayer]?.id || null;
-        const nextPlayerId = myRoom.players[(myRoom.currentPlayer + 1) % myRoom.players.length].id
-        const players = myRoom.players.filter(player => player.id !== socket.id);
+        // Remove player
+        const players = oldPlayers.filter(player => player.id !== socket.id);
+        myRoom.players = players;
 
+        // Cleanup mapping
+        delete SOCKET_ROOM_MAPPING[socket.id];
 
-        ROOMS[roomId].players = players;
-
-
-
+        // If no players left → delete room
         if (players.length === 0) {
-            delete SOCKET_ROOM_MAPPING[socket.id]
-            delete ROOMS[roomId]
+            delete ROOMS[roomId];
             return;
         }
 
-        const payload = {
-            leftPlayerName: leftPlayer.name,
-            players: Object.values(myRoom.players).map(i => ({ name: i.name, win: i.win, id: i.id })),
-            selection: myRoom.game.USER_SELECTION,
-            currentPlayer: players.findIndex(p => p.id === currentPlayerId) >= 0 ? currentPlayerId : nextPlayerId
+        // 🔧 FIX TURN LOGIC
+
+        // If the leaving player was before currentPlayer → shift index
+        if (leftIndex < myRoom.currentPlayer) {
+            myRoom.currentPlayer -= 1;
         }
+
+        // If the leaving player WAS the current player
+        if (leftIndex === myRoom.currentPlayer) {
+            // currentPlayer now points to next player automatically
+            // so no change needed
+        }
+
+        // If index goes out of bounds → wrap to 0
+        if (myRoom.currentPlayer >= players.length) {
+            myRoom.currentPlayer = 0;
+        }
+
+        const currentPlayerId = players[myRoom.currentPlayer].id;
+
+        // Handle owner change
+        let payload = {
+            leftPlayerName: leftPlayer.name,
+            players: players.map(i => ({ name: i.name, win: i.win, id: i.id })),
+            selection: myRoom.game.USER_SELECTION,
+            currentPlayer: currentPlayerId
+        };
 
         if (leftPlayer.id === myRoom.owner) {
-            myRoom.owner = nextPlayerId;
-            payload.owner = nextPlayerId;
+            myRoom.owner = players[0].id;
+            payload.owner = myRoom.owner;
         }
 
-        io.to(roomId).emit('player-left', payload)
+        io.to(roomId).emit('player-left', payload);
     })
 })
 
-
-
-
-server.listen(3005, console.log(`Server started on port: 3005`))
+server.listen(3004, console.log(`Server started on port: 3004`))

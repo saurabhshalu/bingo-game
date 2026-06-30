@@ -26,6 +26,7 @@ const SocketContextProvider = ({ children }) => {
   const [currentPlayer, setCurrentPlayer] = useState(null);
   const [started, setStarted] = useState(false);
   const [winners, setWinners] = useState([]);
+  const [gameCount, setGameCount] = useState(0);
 
   const sortedPlayers = useMemo(() => {
     const ME = players.find((p) => p.id === socketRef.current.id);
@@ -51,10 +52,11 @@ const SocketContextProvider = ({ children }) => {
       navigate("/");
     });
 
-    socket.on("join-room", ({ players, roomId, selection }) => {
+    socket.on("join-room", ({ players, roomId, selection, gameCount }) => {
       setPlayers(players);
       setRoomId(roomId);
       setSelection(selection);
+      setGameCount(gameCount);
     });
 
     socket.on("my-board", (myBoard) => {
@@ -94,16 +96,48 @@ const SocketContextProvider = ({ children }) => {
       }
     );
 
-    socket.on("game-over", ({ winners, players, selection }) => {
+    socket.on("game-over", ({ winners, players, selection, gameCount }) => {
       setPlayers(players);
       setSelection(selection);
+      setGameCount(gameCount);
       setWinners(winners);
+
+      const isWinner = winners.some(
+        (w) => w.id === socket.id
+      );
+
+      import("../helper/sound").then(({ playSound, getRandomItem }) => {
+        const winSounds = [
+          "/sounds/win1.mp3",
+          "/sounds/win2.mp3",
+          "/sounds/win3.mp3",
+          "/sounds/win4.mp3",
+          "/sounds/win5.mp3",
+        ];
+
+        const loseSounds = [
+          "/sounds/lose1.mp3",
+          "/sounds/lose2.mp3",
+          "/sounds/lose3.mp3",
+          "/sounds/lose4.mp3",
+        ];
+
+        const sound = isWinner
+          ? getRandomItem(winSounds)
+          : getRandomItem(loseSounds);
+
+        playSound(sound);
+        setTimeout(() => {
+          playSound(sound);
+        }, 300);
+      });
     });
 
-    socket.on("play-restart", ({ myBoard, selection, currentPlayer }) => {
+    socket.on("play-restart", ({ myBoard, selection, currentPlayer, gameCount }) => {
       setBoard(myBoard);
       setSelection(selection);
       setCurrentPlayer(currentPlayer);
+      setGameCount(gameCount);
       setWinners([]);
     });
 
@@ -135,6 +169,7 @@ const SocketContextProvider = ({ children }) => {
         currentPlayer,
         started,
         winners,
+        gameCount,
       }}
     >
       {children}
