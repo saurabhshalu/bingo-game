@@ -6,11 +6,11 @@ import { motion } from "motion/react";
 import { SocketContext } from "../context/SocketContext";
 
 const GameOver = ({ handleRestart }) => {
-  const { socketRef, winners } = useContext(SocketContext);
+  const { winners, playerId } = useContext(SocketContext);
 
   const amItheWinner = useMemo(
-    () => winners.some((winner) => winner.id === socketRef.current.id),
-    [winners, socketRef]
+    () => winners.some((winner) => winner.playerId === playerId),
+    [winners, playerId]
   );
 
   const GAME_OVER_MESSAGE = useMemo(() => {
@@ -28,7 +28,7 @@ const GameOver = ({ handleRestart }) => {
   }
 
   return (
-    <div className="absolute top-0 left-0 h-full w-full bg-[rgba(0,0,0,0.9)] flex items-center justify-center backdrop-blur-xs flex-col">
+    <div className="absolute top-0 left-0 h-full w-full bg-[rgba(0,0,0,0.9)] flex items-center justify-center backdrop-blur-xs flex-col z-20">
       <div
         className={`englebert-regular pt-4 pb-2 pr-4 pl-4 rounded-md ${classNameBasedOnResult} text-white font-bold text-xl m-4`}
       >
@@ -40,10 +40,10 @@ const GameOver = ({ handleRestart }) => {
             </span>
           )}
           {winners
-            .filter((i) => i.id !== socketRef.current.id)
+            .filter((i) => i.playerId !== playerId)
             .map((item) => (
               <span
-                key={item.id}
+                key={item.playerId}
                 className="bg-black text-white p-1 text-xs rounded-md"
               >
                 {item.name}

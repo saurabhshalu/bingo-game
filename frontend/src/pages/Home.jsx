@@ -2,22 +2,29 @@ import { Button, TextField } from "@mui/material";
 import { motion } from "motion/react";
 import { useContext, useState } from "react";
 import { SocketContext } from "../context/SocketContext";
+import VolumeToggle from "../components/VolumeToggle";
 
 const Home = () => {
   const [joinMode, setJoinMode] = useState(false);
-  const [inputName, setInputName] = useState("");
+  const { socketRef, name, setName, playerId } = useContext(SocketContext);
+  const [inputName, setInputName] = useState(name || "");
   const [inputRoomId, setInputRoomId] = useState("");
 
-  const { socketRef } = useContext(SocketContext);
   const createRoom = () => {
-    socketRef.current.emit("createRoom", { name: inputName });
+    const trimmed = inputName.trim();
+    if (!trimmed) return;
+    setName(trimmed);
+    localStorage.setItem("bingo_player_name", trimmed);
+    socketRef.current.emit("createRoom", { name: trimmed, playerId });
   };
 
   const joinRoom = () => {
-    socketRef.current.emit("joinRoom", {
-      name: inputName,
-      roomId: inputRoomId,
-    });
+    const trimmedName = inputName.trim();
+    const trimmedRoom = inputRoomId.trim().toUpperCase();
+    if (!trimmedName || !trimmedRoom) return;
+    setName(trimmedName);
+    localStorage.setItem("bingo_player_name", trimmedName);
+    socketRef.current.emit("joinRoom", { name: trimmedName, roomId: trimmedRoom, playerId });
   };
 
   return (
@@ -25,8 +32,9 @@ const Home = () => {
       initial={{ y: "100vh" }}
       animate={{ y: "0" }}
       transition={{ type: "spring" }}
-      className="flex flex-col justify-center gap-10 items-center min-h-[100vh]"
+      className="flex flex-col justify-center gap-10 items-center min-h-[100dvh]"
     >
+      <VolumeToggle />
       <h1 className="text-6xl englebert-regular text-neutral-50">
         Bingo Extended
       </h1>
@@ -58,16 +66,14 @@ const Home = () => {
             fullWidth
             placeholder="Enter Room Id"
             value={inputRoomId}
-            onChange={(e) => setInputRoomId(e.target.value)}
+            onChange={(e) => setInputRoomId(e.target.value.toUpperCase())}
             autoFocus
             required
           />
         )}
         {!joinMode ? (
           <Button
-            onClick={() => {
-              setJoinMode(true);
-            }}
+            onClick={() => setJoinMode(true)}
             className="size-10 w-full"
             variant="outlined"
             color="secondary"
@@ -78,9 +84,7 @@ const Home = () => {
         ) : (
           <div className="flex gap-4 w-full">
             <Button
-              onClick={() => {
-                joinRoom();
-              }}
+              onClick={joinRoom}
               className="size-10 w-full"
               variant="contained"
               color="primary"
@@ -89,10 +93,7 @@ const Home = () => {
               Join
             </Button>
             <Button
-              onClick={() => {
-                setInputRoomId("");
-                setJoinMode(false);
-              }}
+              onClick={() => { setInputRoomId(""); setJoinMode(false); }}
               className="size-10 w-full"
               variant="outlined"
               color="error"

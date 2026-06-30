@@ -1,25 +1,22 @@
-import PropTypes from "prop-types";
+import { useContext, useMemo, useRef, useState, useEffect, useCallback } from "react";
 import Block from "../components/Block";
-import { useContext, useMemo } from "react";
 import { SocketContext } from "../context/SocketContext";
 import { Navigate } from "react-router";
-import { motion } from "motion/react";
-import { Avatar, Badge, Tooltip } from "@mui/material";
+import { motion, AnimatePresence } from "motion/react";
+import { Avatar, Badge } from "@mui/material";
 import toast from "react-hot-toast";
 import playLogo from "/play.svg";
 import GameOver from "../components/GameOver";
+import VolumeToggle from "../components/VolumeToggle";
+import ChatPanel from "../components/ChatPanel";
+import TurnTimer from "../components/TurnTimer";
+import { MessageSquare } from "lucide-react";
+import { audioManager } from "../helper/audio.js";
 
 const getCorrectAnswerList = (size = 5) => {
-  const answers = {
-    horizontal: [],
-    vertical: [],
-    diagonal1: [],
-    diagonal2: [],
-  };
-
+  const answers = { horizontal: [], vertical: [], diagonal1: [], diagonal2: [] };
   for (let i = 0; i < size; i++) {
-    const list1 = [];
-    const list2 = [];
+    const list1 = [], list2 = [];
     for (let j = 0; j < size; j++) {
       list1.push(i * size + j + 1);
       list2.push(i + 1 + j * size);
@@ -29,206 +26,274 @@ const getCorrectAnswerList = (size = 5) => {
     answers.diagonal1.push(i * size + (i + 1));
     answers.diagonal2.push(size - i + size * i);
   }
-
   return answers;
 };
 
+const QUICK_EMOJIS = ["😂","🔥","👏","🎉","😮","🚀"];
+const ALL_EMOJIS = [
+  "😂","🔥","👏","🎉","😮","🚀","🤯","⚡","🎯","🏆",
+  "👑","🐉","💯","✨","🫡","🤝","❤️","💔","😤","😭",
+  "🥳","🤩","😎","🤠","👻","💀","🍀","🎲","⭐","☠️"
+];
+
 const Game = () => {
   const {
-    board,
-    socketRef,
-    selection,
-    roomId,
-    players,
-    currentPlayer,
-    started,
-    winners,
-    gameCount
+    board, socketRef, selection, roomId, players, currentPlayer,
+    started, finished, winners, gameCount, playerId, ownerPlayerId,
+    connectedCount, loading, turnDeadline, reactions, chatMessages,
+    sendReaction, playRandom, kickPlayer,
   } = useContext(SocketContext);
-  const size = useMemo(
-    () => Math.floor(Math.sqrt(Object.keys(selection).length)),
-    [selection]
-  );
 
+  const [chatOpen, setChatOpen] = useState(false);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const prevBingoLength = useRef(0);
+  const hasActedRef = useRef(false);
+
+  const size = useMemo(() => Math.floor(Math.sqrt(Object.keys(selection).length)), [selection]);
   const CORRECT_ANSWER_LIST = useMemo(() => getCorrectAnswerList(size), [size]);
-
-  const BINGO_LIST = useMemo(() => {
-    return [
-      CORRECT_ANSWER_LIST.diagonal1,
-      CORRECT_ANSWER_LIST.diagonal2,
-      ...CORRECT_ANSWER_LIST.horizontal,
-      ...CORRECT_ANSWER_LIST.vertical,
-    ].filter((path) =>
-      path.every((item) => {
-        return selection[board[item - 1]] && true;
-      })
-    );
-  }, [CORRECT_ANSWER_LIST, board, selection]);
+  const BINGO_LIST = useMemo(() => [
+    CORRECT_ANSWER_LIST.diagonal1, CORRECT_ANSWER_LIST.diagonal2,
+    ...CORRECT_ANSWER_LIST.horizontal, ...CORRECT_ANSWER_LIST.vertical,
+  ].filter((path) => path.every((item) => selection[board[item - 1]] && true)), [CORRECT_ANSWER_LIST, board, selection]);
   const BINGO_LENGTH = BINGO_LIST.length;
 
-  const playMove = (number) => {
-    socketRef.current.emit("playMove", number);
-  };
+  useEffect(() => {
+    if (BINGO_LENGTH > prevBingoLength.current && BINGO_LENGTH > 0) {
+      audioManager.playChime(BINGO_LENGTH);
+    }
+    prevBingoLength.current = BINGO_LENGTH;
+  }, [BINGO_LENGTH]);
 
-  if (!board || board.length == 0) {
-    return <Navigate to={"/"} replace={true} />;
+  // 30s turn timer — auto-play random when expired
+  useEffect(() => {
+    hasActedRef.current = false; // fresh turn
+    if (!turnDeadline || !started || finished || !currentPlayer) return;
+    const me = players.find((p) => p.playerId === playerId);
+    if (!me || me.id !== currentPlayer) return;
+    const interval = setInterval(() => {
+      if (hasActedRef.current) return;
+      if (Date.now() >= turnDeadline) { hasActedRef.current = true; playRandom(); }
+    }, 200);
+    return () => clearInterval(interval);
+  }, [turnDeadline, started, finished, currentPlayer, playerId, players, playRandom]);
+
+  const playMove = useCallback((number) => {
+    hasActedRef.current = true; // prevent timer from firing after manual move
+    socketRef.current.emit("playMove", number);
+  }, [socketRef]);
+
+  if (loading) {
+    return (
+      <main className="h-[100dvh] flex flex-col items-center justify-center text-white">
+        <div className="w-10 h-10 border-4 border-green-400 border-t-transparent rounded-full animate-spin mb-3" />
+        <p>Connecting...</p>
+      </main>
+    );
   }
+  if (!board || board.length === 0) return <Navigate to="/" replace />;
 
   const handlePlayStart = () => {
-    if (players.length < 2) {
-      return toast.error("Atleast 2 players are required to play");
-    }
+    if (connectedCount < 2) return toast.error("At least 2 players required!");
     socketRef.current.emit("playStart");
   };
-
   const handleRestart = () => {
-    if (players.length < 2) {
-      return toast.error("Atleast 2 players are required to play");
-    }
+    if (connectedCount < 2) return toast.error("At least 2 players required!");
     socketRef.current.emit("playRestart");
   };
+  const copyInviteLink = () => {
+    navigator.clipboard.writeText(`${window.location.origin}/game/${roomId}`).then(() => toast.success("Copied!"));
+  };
+
+  const isMyTurn = currentPlayer === socketRef.current?.id;
+  const isOwner = playerId === ownerPlayerId;
+  const currentPlayerObj = players.find((p) => p.id === currentPlayer);
 
   return (
-    <motion.main
-      initial={{ y: "100vh" }}
-      animate={{ y: 0 }}
-      transition={{ type: "spring" }}
-      className="h-full m-auto flex flex-col gap-5 pb-8 items-center"
-    >
-      <div className="pt-5">
-        <h1 className="text-6xl englebert-regular text-neutral-50">
-          <span
-            className={`transition-colors ${
-              BINGO_LENGTH > 0 ? "text-amber-300" : ""
-            }`}
-          >
-            B
-          </span>
-          <span
-            className={`transition-colors ${
-              BINGO_LENGTH > 1 ? "text-amber-300" : ""
-            }`}
-          >
-            I
-          </span>
-          <span
-            className={`transition-colors ${
-              BINGO_LENGTH > 2 ? "text-amber-300" : ""
-            }`}
-          >
-            N
-          </span>
-          <span
-            className={`transition-colors ${
-              BINGO_LENGTH > 3 ? "text-amber-300" : ""
-            }`}
-          >
-            G
-          </span>
-          <span
-            className={`transition-colors ${
-              BINGO_LENGTH > 4 ? "text-amber-300" : ""
-            }`}
-          >
-            O
-          </span>
-          <span> Extended</span>
-        </h1>
-        <div style={{ fontFamily: "monospace" }} className="text-amber-100 flex gap-5 text-center justify-center">
-           <div><span>RoomId:</span><span>{roomId}</span></div>
-           <div><span>Game Count:</span><span>{gameCount}</span></div>
-        </div>
-      </div>
-      <div className="flex gap-2 max-w-2xl w-full">
-        {players.map((player) => {
-          const thisPlayer = player.id === currentPlayer;
-          return (
-            <motion.div
-              initial={{ scale: 0 }}
-              animate={thisPlayer ? { scale: [1, 0.9, 1] } : { scale: 1 }}
-              key={player.id}
-              transition={{
-                repeat: thisPlayer ? Infinity : 0, // Repeat until condition is met
-              }}
-            >
-              <Badge
-                showZero
-                badgeContent={player.win}
-                color="info"
-                overlap="circular"
-              >
-                <Tooltip
-                  title={`${player.name}${
-                    player.id === socketRef.current.id ? "(You)" : ""
-                  }`}
-                >
-                  <Avatar
-                    style={{
-                      height: 50,
-                      width: 50,
-                      background: thisPlayer ? "#05df72" : undefined,
-                    }}
-                  >
-                    {player.name
-                      .split(" ")
-                      .map((i) => i[0])
-                      .join("")}
-                  </Avatar>
-                </Tooltip>
-              </Badge>
-            </motion.div>
-          );
-        })}
-      </div>
-      <div
-        className="relative grid gap-2 p-4 bg-gray-100 max-w-2xl"
-        style={{
-          gridTemplateColumns: `repeat(${size}, 1fr)`,
-          gridTemplateRows: `repeat(${size}, 1fr)`,
-        }}
+    <>
+      <VolumeToggle />
+      <motion.main
+        initial={{ y: "100vh" }}
+        animate={{ y: 0 }}
+        transition={{ type: "spring" }}
+        className="h-full m-auto flex flex-col gap-4 pb-6 items-center"
       >
-        {board.map((item, index) => (
-          <Block
-            number={item}
-            key={item}
-            handleClick={() => {
-              playMove(item);
-            }}
-            selection={selection}
-            index={index}
-            CORRECT_ANSWER_LIST={CORRECT_ANSWER_LIST}
-          />
-        ))}
-        {winners.length === 0 &&
-          started &&
-          currentPlayer !== socketRef.current.id && (
-            <div className="absolute top-0 left-0 h-full w-full bg-[rgba(0,0,0,0.5)] flex items-center justify-center">
-              <span className="bg-white p-2 rounded-sm">
-                Wait for {players.find((i) => i.id === currentPlayer).name}
-                &apos;s turn
+        {/* Header */}
+        <div className="pt-4 text-center">
+          <h1 className="text-5xl sm:text-6xl englebert-regular text-neutral-50">
+            <span className={`transition-colors ${BINGO_LENGTH > 0 ? "text-amber-300" : ""}`}>B</span>
+            <span className={`transition-colors ${BINGO_LENGTH > 1 ? "text-amber-300" : ""}`}>I</span>
+            <span className={`transition-colors ${BINGO_LENGTH > 2 ? "text-amber-300" : ""}`}>N</span>
+            <span className={`transition-colors ${BINGO_LENGTH > 3 ? "text-amber-300" : ""}`}>G</span>
+            <span className={`transition-colors ${BINGO_LENGTH > 4 ? "text-amber-300" : ""}`}>O</span>
+            <span className="text-neutral-300"> Extended</span>
+          </h1>
+          <div style={{ fontFamily: "monospace" }} className="text-amber-100 flex gap-4 text-center justify-center mt-1 text-sm">
+            <div>Room: {roomId} <button onClick={copyInviteLink} className="hover:text-white ml-1">📋</button></div>
+            <div>Game #{gameCount}</div>
+          </div>
+        </div>
+
+        {/* Players */}
+        <div className="flex gap-2 max-w-2xl w-full px-3 py-1">
+          {players.map((player) => {
+            const isTurn = player.id === currentPlayer;
+            const isMe = player.playerId === playerId;
+            const showTimer = isTurn && started && !finished && player.connected && turnDeadline;
+            return (
+              <div key={player.playerId} className="relative shrink-0 flex flex-col items-center px-1">
+                <div className="relative">
+                  {showTimer && (
+                    <TurnTimer deadline={turnDeadline} size={54} strokeWidth={3} />
+                  )}
+                  <motion.div
+                    animate={isTurn && player.connected ? { scale: [1, 0.9, 1] } : {}}
+                    transition={{ repeat: Infinity, duration: 1.5 }}
+                  >
+                    <Badge showZero badgeContent={player.win} color="info" overlap="circular">
+                      <button
+                        onClick={() => { if (!isMe && player.connected) setEmojiPickerOpen(player.playerId); }}
+                        disabled={isMe || !player.connected}
+                        className="block outline-none rounded-full"
+                      >
+                        <Avatar style={{
+                          height: 46, width: 46,
+                          background: isTurn ? "#05df72" : player.color || undefined,
+                          opacity: player.connected ? 1 : 0.4,
+                          border: isMe ? "2px solid white" : "none",
+                        }}>
+                          <span className="text-sm font-bold">
+                            {player.name.split(" ").map((i) => i[0]).join("")}
+                          </span>
+                        </Avatar>
+                      </button>
+                    </Badge>
+                  </motion.div>
+                  {!player.connected && (
+                    <div className="absolute -bottom-0.5 -right-0.5 flex items-center">
+                      <div className="w-3 h-3 bg-red-500 rounded-full border-2 border-gray-900" />
+                      {isOwner && !started && (
+                        <button onClick={() => kickPlayer(player.playerId)}
+                          className="w-4 h-4 bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center border border-gray-900 ml-0.5 text-white text-[9px] font-bold"
+                          title={`Kick ${player.name}`}>×</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <span className={`text-[10px] mt-0.5 truncate max-w-[48px] ${isMe ? "text-white font-medium" : "text-neutral-400"}`}>
+                  {isMe ? "You" : player.name.split(" ")[0]}
+                </span>
+              </div>
+            );
+          })}
+
+          <button onClick={() => setChatOpen(!chatOpen)}
+            className="relative ml-auto shrink-0 bg-neutral-700/60 hover:bg-neutral-600/80 text-white p-2 rounded-full transition-colors">
+            <MessageSquare size={20} />
+            {chatMessages.length > 0 && !chatOpen && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center border-2 border-gray-900">
+                {chatMessages.length > 9 ? "9+" : chatMessages.length}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Quick emojis + full picker trigger */}
+        <div className="flex gap-1 items-center max-w-2xl w-full px-3">
+          {QUICK_EMOJIS.map((emoji) => (
+            <button key={emoji} onClick={() => sendReaction(emoji)}
+              className="text-xl p-1 rounded hover:bg-white/5 hover:scale-110 transition-all active:scale-90">{emoji}</button>
+          ))}
+          <button onClick={() => setEmojiPickerOpen('board')}
+            className="text-sm p-1.5 rounded hover:bg-white/5 transition-all active:scale-90 ml-1 text-neutral-400 hover:text-white">➕</button>
+        </div>
+
+        {/* Board */}
+        <div
+          className="relative grid gap-2 p-4 bg-gray-100 max-w-2xl"
+          style={{ gridTemplateColumns: `repeat(${size}, 1fr)`, gridTemplateRows: `repeat(${size}, 1fr)` }}
+        >
+          {board.map((item, index) => (
+            <Block number={item} key={item} handleClick={() => playMove(item)}
+              selection={selection} index={index} CORRECT_ANSWER_LIST={CORRECT_ANSWER_LIST} />
+          ))}
+
+          {started && !finished && connectedCount < 2 && (
+            <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10">
+              <span className="bg-white p-3 rounded text-center text-sm font-medium">Waiting for players...</span>
+            </div>
+          )}
+
+          {winners.length === 0 && started && !isMyTurn && connectedCount >= 2 && (
+            <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10">
+              <span className="bg-white p-2 rounded text-sm">
+                Wait for <b>{currentPlayerObj?.name || "..."}</b>&apos;s turn
               </span>
             </div>
           )}
-        {!started && (
-          <div className="absolute top-0 left-0 h-full w-full bg-[rgba(0,0,0,0.5)] flex items-center justify-center backdrop-blur-xs">
-            <motion.img
-              onClick={handlePlayStart}
-              whileHover={{ scale: 1.2 }}
-              whileTap={{ scale: 0.8 }}
-              src={playLogo}
-              alt="play"
-              className="h-28 w-28 cursor-pointer"
-            />
-          </div>
-        )}
-        <GameOver handleRestart={handleRestart} />
-      </div>
-    </motion.main>
-  );
-};
 
-Game.propTypes = {
-  size: PropTypes.number.isRequired,
+          {!started && (
+            <div className="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-xs z-10">
+              {isOwner ? (
+                <motion.img onClick={handlePlayStart}
+                  whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.8 }}
+                  src={playLogo} alt="play" className="h-24 w-24 cursor-pointer" />
+              ) : (
+                <span className="bg-white p-3 rounded text-center text-sm">
+                  Waiting for {players.find((p) => p.playerId === ownerPlayerId)?.name || "owner"} to start
+                </span>
+              )}
+            </div>
+          )}
+
+          <GameOver handleRestart={handleRestart} />
+        </div>
+      </motion.main>
+
+      {/* Floating emojis */}
+      <AnimatePresence>
+        {reactions.map((r) => (
+          <motion.div key={r.id}
+            initial={{ opacity: 0, y: 0, scale: 0.3 }}
+            animate={{ opacity: [0, 1, 1, 0], y: -150, scale: [0.3, 1.2, 1, 0.7] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 2.5, ease: "easeOut" }}
+            className="fixed pointer-events-none z-40 flex flex-col items-center"
+            style={{ left: `${r.x}%`, bottom: `${r.y}%` }}>
+            <span className="text-4xl drop-shadow-lg">{r.emoji}</span>
+            <span className="text-[10px] text-white font-bold bg-black/40 px-2 py-0.5 rounded-full mt-1">{r.fromName}</span>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+
+      {/* Full Emoji Picker Modal */}
+      <AnimatePresence>
+        {emojiPickerOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center" onClick={() => setEmojiPickerOpen(false)}>
+            <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} exit={{ scale: 0.8 }}
+              className="bg-white rounded-xl p-4 shadow-2xl max-w-[280px] w-full mx-4"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="text-sm font-bold text-gray-700">React!</h3>
+                <button onClick={() => setEmojiPickerOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+              </div>
+              <div className="grid grid-cols-6 gap-1.5">
+                {ALL_EMOJIS.map((emoji) => (
+                  <button key={emoji}
+                    onClick={() => { sendReaction(emoji, emojiPickerOpen !== 'board' ? emojiPickerOpen : null); setEmojiPickerOpen(false); }}
+                    className="text-xl p-1.5 rounded hover:bg-gray-100 transition-colors active:scale-90">
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
+    </>
+  );
 };
 
 export default Game;
