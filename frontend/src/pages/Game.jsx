@@ -196,13 +196,15 @@ const Game = () => {
         </div>
 
         {/* Quick emojis + full picker trigger */}
-        <div className="flex gap-1 items-center max-w-2xl w-full px-3">
-          {QUICK_EMOJIS.map((emoji) => (
-            <button key={emoji} onClick={() => sendReaction(emoji)}
-              className="text-xl p-1 rounded hover:bg-white/5 hover:scale-110 transition-all active:scale-90">{emoji}</button>
-          ))}
+        <div className="flex items-center gap-1 max-w-2xl w-full px-3">
+          <div className="flex gap-1 items-center overflow-x-auto scrollbar-hide">
+            {QUICK_EMOJIS.map((emoji) => (
+              <button key={emoji} onClick={() => sendReaction(emoji)}
+                className="text-xl p-1 rounded hover:bg-white/5 hover:scale-110 transition-all active:scale-90 shrink-0">{emoji}</button>
+            ))}
+          </div>
           <button onClick={() => setEmojiPickerOpen('board')}
-            className="text-sm p-1.5 rounded hover:bg-white/5 transition-all active:scale-90 ml-1 text-neutral-400 hover:text-white">➕</button>
+            className="text-sm p-1.5 rounded hover:bg-white/5 transition-all active:scale-90 ml-1 text-neutral-400 hover:text-white shrink-0">➕</button>
         </div>
 
         {/* Board */}
