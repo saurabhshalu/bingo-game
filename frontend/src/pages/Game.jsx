@@ -10,7 +10,7 @@ import GameOver from "../components/GameOver";
 import VolumeToggle from "../components/VolumeToggle";
 import ChatPanel from "../components/ChatPanel";
 import TurnTimer from "../components/TurnTimer";
-import { MessageSquare, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { audioManager } from "../helper/audio.js";
 
 const getCorrectAnswerList = (size = 5) => {
@@ -29,7 +29,7 @@ const getCorrectAnswerList = (size = 5) => {
   return answers;
 };
 
-const QUICK_EMOJIS = ["😂","🔥","👏","🎉","😮","🚀"];
+const QUICK_EMOJIS = ["😂","😭","🎉","🏆","👏","🔥","💔","🤯","😮","🚀"];
 const ALL_EMOJIS = [
   "😂","🔥","👏","🎉","😮","🚀","🤯","⚡","🎯","🏆",
   "👑","🐉","💯","✨","🫡","🤝","❤️","💔","😤","😭",
@@ -40,11 +40,10 @@ const Game = () => {
   const {
     board, socketRef, selection, roomId, players, currentPlayer,
     started, finished, winners, gameCount, playerId, ownerPlayerId,
-    connectedCount, loading, turnDeadline, reactions, chatMessages,
+    connectedCount, loading, turnDeadline, reactions, chatFlashes,
     sendReaction, playRandom, kickPlayer,
   } = useContext(SocketContext);
 
-  const [chatOpen, setChatOpen] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [showExitDialog, setShowExitDialog] = useState(false);
   const prevBingoLength = useRef(0);
@@ -194,15 +193,6 @@ const Game = () => {
             );
           })}
 
-          <button onClick={() => setChatOpen(!chatOpen)}
-            className="relative ml-auto shrink-0 bg-neutral-700/60 hover:bg-neutral-600/80 text-white p-2 rounded-full transition-colors">
-            <MessageSquare size={20} />
-            {chatMessages.length > 0 && !chatOpen && (
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center border-2 border-gray-900">
-                {chatMessages.length > 9 ? "9+" : chatMessages.length}
-              </span>
-            )}
-          </button>
         </div>
 
         {/* Quick emojis + full picker trigger */}
@@ -232,21 +222,23 @@ const Game = () => {
           ))}
 
           {started && !finished && connectedCount < 2 && (
-            <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10">
-              <span className="bg-white p-3 rounded text-center text-sm font-medium">Waiting for players...</span>
+            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+              <span className="bg-black/80 text-white px-5 py-2 rounded-full text-sm font-medium shadow-xl backdrop-blur-sm" style={{ WebkitBackdropFilter: 'blur(4px)' }}>
+                Waiting for players…
+              </span>
             </div>
           )}
 
           {winners.length === 0 && started && !finished && !isMyTurn && connectedCount >= 2 && (
-            <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10">
-              <span className="bg-white p-2 rounded text-sm">
-                Wait for <b>{currentPlayerObj?.name || "..."}</b>&apos;s turn
+            <div className="absolute inset-0 top-[-15px] z-10 pointer-events-none">
+              <span className="bg-black/40 text-white px-5 py-2 rounded-full text-sm shadow-xl backdrop-blur-sm" style={{ WebkitBackdropFilter: 'blur(4px)' }}>
+                Wait for <b>{currentPlayerObj?.name || "…"}</b>&apos;s turn
               </span>
             </div>
           )}
 
           {!started && (
-            <div className="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-xs z-10" style={{ WebkitBackdropFilter: 'blur(2px)' }}>
+            <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-10" style={{ WebkitBackdropFilter: 'blur(1px)' }}>
               {isOwner ? (
                 <motion.img onClick={handlePlayStart}
                   whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.8 }}
@@ -261,6 +253,8 @@ const Game = () => {
 
           <GameOver handleRestart={handleRestart} />
         </div>
+
+        <ChatPanel />
       </motion.main>
 
       {/* Floating emojis */}
@@ -275,6 +269,24 @@ const Game = () => {
             style={{ left: `${r.x}%`, bottom: `${r.y}%` }}>
             <span className="text-4xl drop-shadow-lg">{r.emoji}</span>
             <span className="text-[10px] text-white font-bold bg-black/40 px-2 py-0.5 rounded-full mt-1">{r.fromName}</span>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+
+      {/* Floating chat messages */}
+      <AnimatePresence>
+        {chatFlashes.map((m) => (
+          <motion.div key={m.id}
+            initial={{ opacity: 0, y: 0, scale: 0.5 }}
+            animate={{ opacity: [0, 1, 1, 0], y: -120, scale: [0.5, 1, 1, 0.8] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 3.5, ease: "easeOut" }}
+            className="fixed pointer-events-none z-40"
+            style={{ left: `${m.x}%`, bottom: `${m.y}%` }}>
+            <div className="bg-black/75 text-white text-sm px-4 py-2 rounded-2xl rounded-bl-none shadow-lg backdrop-blur-sm max-w-[260px]" style={{ WebkitBackdropFilter: 'blur(4px)' }}>
+              <span className="text-[10px] text-amber-300 font-bold block mb-0.5">{m.name}</span>
+              <span className="break-words">{m.text}</span>
+            </div>
           </motion.div>
         ))}
       </AnimatePresence>
@@ -331,8 +343,6 @@ const Game = () => {
           </motion.div>
         )}
       </AnimatePresence>
-
-      <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
     </>
   );
 };

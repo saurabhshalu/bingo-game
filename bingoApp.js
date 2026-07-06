@@ -485,7 +485,7 @@ io.on('connection', (socket) => {
             id: Date.now().toString(36) + Math.random().toString(36).substr(2),
             playerId: me.playerId,
             name: me.name,
-            text: String(text).trim().slice(0, 300),
+            text: String(text).trim().slice(0, 100),
             timestamp: Date.now()
         };
 

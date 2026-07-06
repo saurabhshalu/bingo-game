@@ -45,6 +45,7 @@ const SocketContextProvider = ({ children }) => {
   const [gameCount, setGameCount] = useState(0);
   const [chatMessages, setChatMessages] = useState([]);
   const [reactions, setReactions] = useState([]);
+  const [chatFlashes, setChatFlashes] = useState([]);
   const [ownerPlayerId, setOwnerPlayerId] = useState(null);
   const [turnDeadline, setTurnDeadline] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -74,6 +75,16 @@ const SocketContextProvider = ({ children }) => {
     () => players.filter((p) => p.connected).length,
     [players]
   );
+
+  const addChatFlash = (message) => {
+    const id = Date.now() + Math.random();
+    const x = 15 + Math.random() * 70;
+    const y = 15 + Math.random() * 25;
+    setChatFlashes((prev) => [...prev, { ...message, id, x, y }]);
+    setTimeout(() => {
+      setChatFlashes((prev) => prev.filter((m) => m.id !== id));
+    }, 3500);
+  };
 
   const addReaction = (reaction) => {
     const id = Date.now() + Math.random();
@@ -270,6 +281,7 @@ const SocketContextProvider = ({ children }) => {
         if (next.length > 50) next.shift();
         return next;
       });
+      addChatFlash(message);
       if (message.playerId !== playerId) {
         audioManager.playNotification();
       }
@@ -320,6 +332,7 @@ const SocketContextProvider = ({ children }) => {
         gameCount,
         chatMessages,
         reactions,
+        chatFlashes,
         playerId,
         ownerPlayerId,
         name,
