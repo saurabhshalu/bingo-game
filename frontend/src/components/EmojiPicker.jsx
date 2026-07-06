@@ -26,7 +26,7 @@ const EmojiPicker = ({ onPick, onClose, anchorRef }) => {
     <div
       ref={pickerRef}
       className="absolute z-50 bg-neutral-800/95 backdrop-blur-md border border-neutral-600 rounded-xl p-3 shadow-2xl w-52"
-      style={{ top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)" }}
+      style={{ top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)", WebkitBackdropFilter: 'blur(12px)' }}
     >
       <div className="grid grid-cols-5 gap-1.5">
         {ALL_EMOJIS.map((emoji) => (

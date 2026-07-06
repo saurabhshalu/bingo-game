@@ -10,7 +10,7 @@ import GameOver from "../components/GameOver";
 import VolumeToggle from "../components/VolumeToggle";
 import ChatPanel from "../components/ChatPanel";
 import TurnTimer from "../components/TurnTimer";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, LogOut } from "lucide-react";
 import { audioManager } from "../helper/audio.js";
 
 const getCorrectAnswerList = (size = 5) => {
@@ -46,6 +46,7 @@ const Game = () => {
 
   const [chatOpen, setChatOpen] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [showExitDialog, setShowExitDialog] = useState(false);
   const prevBingoLength = useRef(0);
   const hasActedRef = useRef(false);
 
@@ -64,7 +65,7 @@ const Game = () => {
     prevBingoLength.current = BINGO_LENGTH;
   }, [BINGO_LENGTH]);
 
-  // 30s turn timer — auto-play random when expired
+  // 10s turn timer — auto-play random when expired
   useEffect(() => {
     hasActedRef.current = false; // fresh turn
     if (!turnDeadline || !started || finished || !currentPlayer) return;
@@ -84,7 +85,7 @@ const Game = () => {
 
   if (loading) {
     return (
-      <main className="h-[100dvh] flex flex-col items-center justify-center text-white">
+      <main className="min-h-[100dvh] flex flex-col items-center justify-center text-white">
         <div className="w-10 h-10 border-4 border-green-400 border-t-transparent rounded-full animate-spin mb-3" />
         <p>Connecting...</p>
       </main>
@@ -111,11 +112,18 @@ const Game = () => {
   return (
     <>
       <VolumeToggle />
+      <button
+        onClick={() => setShowExitDialog(true)}
+        className="fixed top-14 right-4 z-40 bg-neutral-700/50 hover:bg-red-600/70 text-white p-2 rounded-full transition-colors"
+        title="Leave game"
+      >
+        <LogOut size={18} />
+      </button>
       <motion.main
         initial={{ y: "100vh" }}
         animate={{ y: 0 }}
         transition={{ type: "spring" }}
-        className="h-full m-auto flex flex-col gap-4 pb-6 items-center"
+        className="min-h-[100dvh] m-auto flex flex-col gap-4 pb-6 items-center"
       >
         {/* Header */}
         <div className="pt-4 text-center">
@@ -138,7 +146,7 @@ const Game = () => {
           {players.map((player) => {
             const isTurn = player.id === currentPlayer;
             const isMe = player.playerId === playerId;
-            const showTimer = isTurn && started && !finished && player.connected && turnDeadline;
+            const showTimer = isTurn && started && !finished && turnDeadline;
             return (
               <div key={player.playerId} className="relative shrink-0 flex flex-col items-center px-1">
                 <div className="relative">
@@ -209,8 +217,14 @@ const Game = () => {
 
         {/* Board */}
         <div
-          className="relative grid gap-2 p-4 bg-gray-100 max-w-2xl"
-          style={{ gridTemplateColumns: `repeat(${size}, 1fr)`, gridTemplateRows: `repeat(${size}, 1fr)` }}
+          className="relative grid gap-2 p-4 bg-gray-100 mx-auto"
+          style={{
+            gridTemplateColumns: `repeat(${size}, 1fr)`,
+            gridTemplateRows: `repeat(${size}, 1fr)`,
+            width: 'min(100%, 42rem, calc(100dvh - 260px))',
+            height: 'min(100%, 42rem, calc(100dvh - 260px))',
+            aspectRatio: '1 / 1',
+          }}
         >
           {board.map((item, index) => (
             <Block number={item} key={item} handleClick={() => playMove(item)}
@@ -223,7 +237,7 @@ const Game = () => {
             </div>
           )}
 
-          {winners.length === 0 && started && !isMyTurn && connectedCount >= 2 && (
+          {winners.length === 0 && started && !finished && !isMyTurn && connectedCount >= 2 && (
             <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10">
               <span className="bg-white p-2 rounded text-sm">
                 Wait for <b>{currentPlayerObj?.name || "..."}</b>&apos;s turn
@@ -232,7 +246,7 @@ const Game = () => {
           )}
 
           {!started && (
-            <div className="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-xs z-10">
+            <div className="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-xs z-10" style={{ WebkitBackdropFilter: 'blur(2px)' }}>
               {isOwner ? (
                 <motion.img onClick={handlePlayStart}
                   whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.8 }}
@@ -285,6 +299,33 @@ const Game = () => {
                     {emoji}
                   </button>
                 ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Exit Confirmation Dialog */}
+      <AnimatePresence>
+        {showExitDialog && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+            style={{ WebkitBackdropFilter: 'blur(4px)' }}
+            onClick={() => setShowExitDialog(false)}>
+            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} exit={{ scale: 0.9 }}
+              className="bg-neutral-800 border border-neutral-600 rounded-xl p-6 shadow-2xl max-w-xs w-full mx-4 text-center"
+              onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-white font-bold text-lg mb-2">Leave Game?</h3>
+              <p className="text-neutral-300 text-sm mb-5">Are you sure you want to leave the game?</p>
+              <div className="flex gap-3 justify-center">
+                <button onClick={() => setShowExitDialog(false)}
+                  className="px-4 py-2 rounded-md bg-neutral-600 hover:bg-neutral-500 text-white text-sm font-medium transition-colors">
+                  Cancel
+                </button>
+                <button onClick={() => { socketRef.current?.disconnect(); window.location.href = "/"; }}
+                  className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-500 text-white text-sm font-medium transition-colors">
+                  Leave
+                </button>
               </div>
             </motion.div>
           </motion.div>

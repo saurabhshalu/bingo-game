@@ -86,7 +86,8 @@ const clearTurnTimer = (room) => {
 
 const startTurnTimer = (room, roomId) => {
     clearTurnTimer(room);
-    const TURN_DURATION = 30000; // 30 seconds
+    if (getConnectedCount(room) < 2) return;
+    const TURN_DURATION = 10000; // 10 seconds
     room.turnDeadline = Date.now() + TURN_DURATION;
     room.turnTimer = setTimeout(() => {
         handleAutoRandomMove(roomId);
@@ -110,6 +111,10 @@ const broadcastTurnState = (room, roomId, extra = {}) => {
 const handleAutoRandomMove = (roomId) => {
     const myRoom = ROOMS[roomId];
     if (!myRoom || myRoom.finished || !myRoom.started) return;
+    if (getConnectedCount(myRoom) < 2) {
+        clearTurnTimer(myRoom);
+        return;
+    }
 
     const unplayed = getUnplayedNumbers(myRoom.game);
     if (unplayed.length === 0) return;
@@ -138,9 +143,9 @@ const handleAutoRandomMove = (roomId) => {
 
     if (winners.length > 0) {
         myRoom.finished = true;
-        myRoom.gameCount += 1;
+        myRoom.winners = winners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId }));
         return io.to(roomId).emit('game-over', {
-            winners: winners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId })),
+            winners: myRoom.winners,
             players: myRoom.players.map(serializePlayer),
             selection: myRoom.game.USER_SELECTION,
             gameCount: myRoom.gameCount,
@@ -175,6 +180,10 @@ const joinRoom = (socket, roomId, player, isRejoin = false) => {
         existing.name = player.name;
         SOCKET_ROOM_MAPPING[socket.id] = roomId;
 
+        if (myRoom.started && !myRoom.finished && getConnectedCount(myRoom) >= 2 && !myRoom.turnTimer) {
+            startTurnTimer(myRoom, roomId);
+        }
+
         socket.emit('rejoined', {
             roomId,
             players: myRoom.players.map(serializePlayer),
@@ -183,6 +192,7 @@ const joinRoom = (socket, roomId, player, isRejoin = false) => {
             gameCount: myRoom.gameCount,
             started: myRoom.started,
             finished: myRoom.finished,
+            winners: myRoom.winners,
             chatHistory: myRoom.chatHistory,
             myBoard: existing.board,
             ownerPlayerId: myRoom.ownerPlayerId,
@@ -192,8 +202,9 @@ const joinRoom = (socket, roomId, player, isRejoin = false) => {
         socket.to(roomId).emit('player-rejoined', {
             players: myRoom.players.map(serializePlayer),
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null,
-            rejoinedPlayerId: existing.playerId
-        });
+            rejoinedPlayerId: existing.playerId,
+            turnDeadline: myRoom.turnDeadline
+        })
     } else {
         const myBoard = myRoom.game.prepareBlankChart();
         const playerColor = player.color || getRandomColor();
@@ -249,7 +260,8 @@ io.on('connection', (socket) => {
             started: false,
             currentPlayer: 0,
             finished: false,
-            gameCount: 0,
+            gameCount: 1,
+            winners: [],
             chatHistory: [],
             turnTimer: null,
             turnDeadline: null
@@ -316,9 +328,9 @@ io.on('connection', (socket) => {
 
         if (winners.length > 0) {
             myRoom.finished = true;
-            myRoom.gameCount += 1;
+            myRoom.winners = winners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId }));
             return io.to(roomId).emit('game-over', {
-                winners: winners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId })),
+                winners: myRoom.winners,
                 players: myRoom.players.map(serializePlayer),
                 selection: myRoom.game.USER_SELECTION,
                 gameCount: myRoom.gameCount,
@@ -442,6 +454,7 @@ io.on('connection', (socket) => {
         clearTurnTimer(myRoom);
         myRoom.currentPlayer = getNextConnectedIndex(myRoom, myRoom.currentPlayer);
         myRoom.finished = false;
+        myRoom.winners = [];
         myRoom.game.restart();
         myRoom.gameCount += 1;
 
@@ -531,13 +544,16 @@ io.on('connection', (socket) => {
             }
         }
 
-        // Handle turn — skip disconnected player
+        // Handle turn — auto-play for disconnected player instead of skipping
         if (leftIndex === myRoom.currentPlayer) {
             clearTurnTimer(myRoom);
-            myRoom.currentPlayer = getNextConnectedIndex(myRoom, leftIndex);
-            if (myRoom.started && !myRoom.finished && myRoom.players[myRoom.currentPlayer]?.connected) {
+            if (myRoom.started && !myRoom.finished) {
                 startTurnTimer(myRoom, roomId);
             }
+        }
+
+        if (getConnectedCount(myRoom) < 2) {
+            clearTurnTimer(myRoom);
         }
 
         const payload = {

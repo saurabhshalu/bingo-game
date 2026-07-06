@@ -6,7 +6,9 @@ import { motion } from "motion/react";
 import { SocketContext } from "../context/SocketContext";
 
 const GameOver = ({ handleRestart }) => {
-  const { winners, playerId } = useContext(SocketContext);
+  const { winners, playerId, ownerPlayerId, players } = useContext(SocketContext);
+  const isOwner = playerId === ownerPlayerId;
+  const ownerName = players.find((p) => p.playerId === ownerPlayerId)?.name || "owner";
 
   const amItheWinner = useMemo(
     () => winners.some((winner) => winner.playerId === playerId),
@@ -28,7 +30,7 @@ const GameOver = ({ handleRestart }) => {
   }
 
   return (
-    <div className="absolute top-0 left-0 h-full w-full bg-[rgba(0,0,0,0.9)] flex items-center justify-center backdrop-blur-xs flex-col z-20">
+    <div className="absolute top-0 left-0 h-full w-full bg-[rgba(0,0,0,0.9)] flex items-center justify-center backdrop-blur-xs flex-col z-20" style={{ WebkitBackdropFilter: 'blur(2px)' }}>
       <div
         className={`englebert-regular pt-4 pb-2 pr-4 pl-4 rounded-md ${classNameBasedOnResult} text-white font-bold text-xl m-4`}
       >
@@ -52,16 +54,22 @@ const GameOver = ({ handleRestart }) => {
         </div>
       </div>
       <div>
-        <Tooltip title="Restart">
-          <motion.img
-            onClick={handleRestart}
-            whileHover={{ scale: 1.2 }}
-            whileTap={{ scale: 0.8 }}
-            src={restartLogo}
-            alt="restart"
-            className="h-24 w-24 cursor-pointer"
-          />
-        </Tooltip>
+        {isOwner ? (
+          <Tooltip title="Restart">
+            <motion.img
+              onClick={handleRestart}
+              whileHover={{ scale: 1.2 }}
+              whileTap={{ scale: 0.8 }}
+              src={restartLogo}
+              alt="restart"
+              className="h-24 w-24 cursor-pointer"
+            />
+          </Tooltip>
+        ) : (
+          <span className="text-white text-sm">
+            Waiting for <b>{ownerName}</b> to restart the game
+          </span>
+        )}
       </div>
     </div>
   );

@@ -155,6 +155,7 @@ const SocketContextProvider = ({ children }) => {
       gameCount: gc,
       started: st,
       finished: fin,
+      winners: w,
       chatHistory: ch,
       myBoard,
       ownerPlayerId: oid,
@@ -171,7 +172,7 @@ const SocketContextProvider = ({ children }) => {
       setChatMessages(ch || []);
       setOwnerPlayerId(oid);
       setTurnDeadline(td);
-      setWinners([]);
+      setWinners(w || []);
       setLoading(false);
       navigate(`/game/${rid}`, { replace: true });
       toast.success("Rejoined the game!");
@@ -213,9 +214,10 @@ const SocketContextProvider = ({ children }) => {
       audioManager.playLeave();
     });
 
-    socket.on("player-rejoined", ({ players: p, currentPlayer: cp, rejoinedPlayerId }) => {
+    socket.on("player-rejoined", ({ players: p, currentPlayer: cp, rejoinedPlayerId, turnDeadline: td }) => {
       setPlayers(p);
       setCurrentPlayer(cp);
+      setTurnDeadline(td);
       const rejoiner = p.find((pl) => pl.playerId === rejoinedPlayerId);
       if (rejoiner) {
         toast.success(`${rejoiner.name} rejoined!`);

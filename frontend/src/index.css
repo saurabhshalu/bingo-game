@@ -30,3 +30,17 @@
   display: none;
 }
 
+/* Safari fixes */
+html, body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@supports (-webkit-touch-callout: none) {
+  /* iOS specific height fix */
+  .min-h-ios {
+    min-height: -webkit-fill-available;
+  }
+}
+

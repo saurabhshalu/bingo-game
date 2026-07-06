@@ -13,7 +13,7 @@ const Number = ({ number }) => {
         y="50%"
         textAnchor="middle"
         dominantBaseline="central"
-        fontSize="300%"
+        fontSize="65"
       >
         {number}
       </text>

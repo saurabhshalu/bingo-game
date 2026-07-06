@@ -32,7 +32,7 @@ const Home = () => {
       initial={{ y: "100vh" }}
       animate={{ y: "0" }}
       transition={{ type: "spring" }}
-      className="flex flex-col justify-center gap-10 items-center min-h-[100dvh]"
+      className="flex flex-col justify-center gap-10 items-center min-h-screen min-h-[100dvh]"
     >
       <VolumeToggle />
       <h1 className="text-6xl englebert-regular text-neutral-50">
