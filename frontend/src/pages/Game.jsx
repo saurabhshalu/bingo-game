@@ -40,7 +40,7 @@ const Game = () => {
   const {
     board, socketRef, selection, roomId, players, currentPlayer,
     started, finished, winners, gameCount, playerId, ownerPlayerId,
-    connectedCount, loading, turnDeadline, reactions, chatFlashes,
+    connectedCount, loading, turnDeadline, reactions, chatFlashes, recentMoves,
     sendReaction, playRandom, kickPlayer,
   } = useContext(SocketContext);
 
@@ -63,6 +63,22 @@ const Game = () => {
     }
     prevBingoLength.current = BINGO_LENGTH;
   }, [BINGO_LENGTH]);
+
+  // Auto-scroll to top when virtual keyboard closes (mobile)
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    let prevHeight = vv.height;
+    const onResize = () => {
+      const newHeight = vv.height;
+      if (newHeight > prevHeight * 1.1) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      prevHeight = newHeight;
+    };
+    vv.addEventListener('resize', onResize);
+    return () => vv.removeEventListener('resize', onResize);
+  }, []);
 
   // 10s turn timer — auto-play random when expired
   useEffect(() => {
@@ -168,13 +184,28 @@ const Game = () => {
                           opacity: player.connected ? 1 : 0.4,
                           border: isMe ? "2px solid white" : "none",
                         }}>
-                          <span className="text-sm font-bold">
-                            {player.name.split(" ").map((i) => i[0]).join("")}
-                          </span>
+                          <span className="text-sm font-bold">{player.name.split(" ").map((i) => i[0]).join("")}</span>
                         </Avatar>
                       </button>
                     </Badge>
                   </motion.div>
+                  {(() => {
+                    const recent = recentMoves[player.playerId];
+                    if (!isMe && recent && Date.now() - recent.time < 2000) {
+                      return (
+                        <motion.div
+                          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center rounded-full z-10"
+                          style={{ width: 46, height: 46, backgroundColor: player.color || '#666' }}
+                          initial={{ scale: 1, opacity: 1 }}
+                          animate={{ scale: [1, 1.4, 1.1, 1.6], opacity: [1, 1, 1, 0] }}
+                          transition={{ duration: 2, ease: "easeOut" }}
+                        >
+                          <span className="text-xl font-bold text-white">{recent.number}</span>
+                        </motion.div>
+                      );
+                    }
+                    return null;
+                  })()}
                   {!player.connected && (
                     <div className="absolute -bottom-0.5 -right-0.5 flex items-center">
                       <div className="w-3 h-3 bg-red-500 rounded-full border-2 border-gray-900" />
@@ -209,12 +240,10 @@ const Game = () => {
 
         {/* Board */}
         <div
-          className="relative grid gap-2 p-4 bg-gray-100 mx-auto"
+          className="relative grid gap-2 p-4 bg-gray-100 mx-auto w-full max-w-2xl shrink-0"
           style={{
             gridTemplateColumns: `repeat(${size}, 1fr)`,
             gridTemplateRows: `repeat(${size}, 1fr)`,
-            width: 'min(100%, 42rem, calc(100dvh - 260px))',
-            height: 'min(100%, 42rem, calc(100dvh - 260px))',
             aspectRatio: '1 / 1',
           }}
         >
@@ -224,7 +253,7 @@ const Game = () => {
           ))}
 
           {started && !finished && connectedCount < 2 && (
-            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+            <div className="absolute inset-0 flex items-center justify-center z-10">
               <span className="bg-black/80 text-white px-5 py-2 rounded-full text-sm font-medium shadow-xl backdrop-blur-sm" style={{ WebkitBackdropFilter: 'blur(4px)' }}>
                 Waiting for players…
               </span>
@@ -232,8 +261,8 @@ const Game = () => {
           )}
 
           {winners.length === 0 && started && !finished && !isMyTurn && connectedCount >= 2 && (
-            <div className="absolute inset-0 top-[-15px] z-10 pointer-events-none">
-              <span className="bg-black/40 text-white px-5 py-2 rounded-full text-sm shadow-xl backdrop-blur-sm" style={{ WebkitBackdropFilter: 'blur(4px)' }}>
+            <div className="absolute inset-0 bg-black/20 z-10 flex items-start justify-center">
+              <span className="bg-black/70 text-white px-5 py-1 rounded-full text-sm shadow-xl backdrop-blur-sm -translate-y-1/2" style={{ WebkitBackdropFilter: 'blur(4px)' }}>
                 Wait for <b>{currentPlayerObj?.name || "…"}</b>&apos;s turn
               </span>
             </div>

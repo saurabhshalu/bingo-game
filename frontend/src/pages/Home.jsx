@@ -67,6 +67,7 @@ const Home = () => {
             placeholder="Enter Room Id"
             value={inputRoomId}
             onChange={(e) => setInputRoomId(e.target.value.toUpperCase())}
+            autoComplete="off"
             autoFocus
             required
           />

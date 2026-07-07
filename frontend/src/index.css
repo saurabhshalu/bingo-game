@@ -35,6 +35,8 @@ html, body {
   min-height: 100vh;
   min-height: 100dvh;
   -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
 }
 
 @supports (-webkit-touch-callout: none) {

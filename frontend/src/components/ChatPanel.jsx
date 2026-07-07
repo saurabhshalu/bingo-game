@@ -1,6 +1,7 @@
 import { useContext, useRef, useEffect, useState } from "react";
 import { SocketContext } from "../context/SocketContext";
 import { motion, AnimatePresence } from "motion/react";
+import { MessageSquare } from "lucide-react";
 
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "🔥", "🎉", "😮"];
 
@@ -18,7 +19,12 @@ const ChatPanel = () => {
   const handleSubmit = (e) => {
     e.preventDefault();
     const text = inputRef.current?.value;
-    if (text?.trim()) { sendChatMessage(text); inputRef.current.value = ""; }
+    if (text?.trim()) {
+      sendChatMessage(text);
+      inputRef.current.value = "";
+      inputRef.current.blur();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
     setShowEmoji(false);
   };
 
@@ -33,16 +39,16 @@ const ChatPanel = () => {
 
   return (
     <div className="w-full max-w-2xl mx-auto relative z-20">
-      {/* History (expands upward) */}
+      {/* History overlay above the board */}
       <AnimatePresence>
         {showHistory && (
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 220, opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            className="overflow-hidden bg-neutral-900/95 border-t border-neutral-700"
-            style={{ WebkitBackdropFilter: 'blur(8px)' }}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            transition={{ duration: 0.2 }}
+            className="absolute bottom-full left-0 right-0 mb-2 z-30 bg-neutral-900/95 border border-neutral-600 rounded-t-xl overflow-hidden shadow-2xl"
+            style={{ height: 'min(50dvh, 300px)', WebkitBackdropFilter: 'blur(8px)' }}
           >
             <div ref={scrollRef} className="h-full overflow-y-auto p-3 space-y-2">
               {chatMessages.length === 0 && (
@@ -85,12 +91,14 @@ const ChatPanel = () => {
         <button type="button" onClick={() => setShowEmoji(!showEmoji)}
           className="text-neutral-400 hover:text-yellow-400 transition-colors p-1.5 rounded hover:bg-neutral-700 shrink-0">😊</button>
         <input ref={inputRef} type="text" placeholder="Type a message..." autoComplete="off"
+          enterKeyHint="send"
           className="flex-1 bg-neutral-900/80 text-neutral-100 text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-green-500 placeholder:text-neutral-600"
           maxLength={100} />
         <button type="submit" className="text-green-400 hover:text-green-300 transition-colors px-3 py-2 rounded hover:bg-neutral-700 shrink-0 text-xs font-bold">➤</button>
         <button type="button" onClick={() => setShowHistory(!showHistory)}
-          className="text-neutral-400 hover:text-white text-xs px-2 py-1.5 rounded hover:bg-neutral-700 transition-colors shrink-0">
-          {showHistory ? "Hide" : "History"}
+          className={`transition-colors p-1.5 rounded hover:bg-neutral-700 shrink-0 ${showHistory ? "text-green-400" : "text-neutral-400 hover:text-white"}`}
+          title={showHistory ? "Hide history" : "Show history"}>
+          <MessageSquare size={16} />
         </button>
       </form>
     </div>

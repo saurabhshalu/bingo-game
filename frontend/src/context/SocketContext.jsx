@@ -47,6 +47,7 @@ const SocketContextProvider = ({ children }) => {
   const [reactions, setReactions] = useState([]);
   const [chatFlashes, setChatFlashes] = useState([]);
   const [ownerPlayerId, setOwnerPlayerId] = useState(null);
+  const [recentMoves, setRecentMoves] = useState({});
   const [turnDeadline, setTurnDeadline] = useState(null);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState(() => localStorage.getItem("bingo_player_name") || "");
@@ -196,11 +197,21 @@ const SocketContextProvider = ({ children }) => {
       audioManager.playError();
     });
 
-    socket.on("play-move", ({ players: p, selection: s, currentPlayer: cp, lastMove, turnDeadline: td }) => {
+    socket.on("play-move", ({ players: p, selection: s, currentPlayer: cp, lastMove, lastPlayerId, lastPlayerName, turnDeadline: td }) => {
       setSelection(s);
       setPlayers(p);
       setCurrentPlayer(cp);
       setTurnDeadline(td);
+      if (lastPlayerId && lastMove != null) {
+        setRecentMoves((prev) => ({ ...prev, [lastPlayerId]: { number: lastMove, time: Date.now() } }));
+        setTimeout(() => {
+          setRecentMoves((prev) => {
+            const next = { ...prev };
+            if (next[lastPlayerId]?.number === lastMove) delete next[lastPlayerId];
+            return next;
+          });
+        }, 2000);
+      }
       audioManager.playPop();
     });
 
@@ -247,11 +258,21 @@ const SocketContextProvider = ({ children }) => {
       ));
     });
 
-    socket.on("game-over", ({ winners: w, players: p, selection: s, gameCount: gc }) => {
+    socket.on("game-over", ({ winners: w, players: p, selection: s, gameCount: gc, lastMove, lastPlayerId, lastPlayerName }) => {
       setPlayers(p);
       setSelection(s);
       setGameCount(gc);
       setWinners(w);
+      if (lastPlayerId && lastMove != null) {
+        setRecentMoves((prev) => ({ ...prev, [lastPlayerId]: { number: lastMove, time: Date.now() } }));
+        setTimeout(() => {
+          setRecentMoves((prev) => {
+            const next = { ...prev };
+            if (next[lastPlayerId]?.number === lastMove) delete next[lastPlayerId];
+            return next;
+          });
+        }, 2000);
+      }
       setFinished(true);
       setTurnDeadline(null);
 
@@ -333,6 +354,7 @@ const SocketContextProvider = ({ children }) => {
         chatMessages,
         reactions,
         chatFlashes,
+        recentMoves,
         playerId,
         ownerPlayerId,
         name,

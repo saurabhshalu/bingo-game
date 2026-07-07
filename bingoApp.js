@@ -87,7 +87,7 @@ const clearTurnTimer = (room) => {
 const startTurnTimer = (room, roomId) => {
     clearTurnTimer(room);
     if (getConnectedCount(room) < 2) return;
-    const TURN_DURATION = 10000; // 10 seconds
+    const TURN_DURATION = 15000; // 10 seconds
     room.turnDeadline = Date.now() + TURN_DURATION;
     room.turnTimer = setTimeout(() => {
         handleAutoRandomMove(roomId);
@@ -132,12 +132,15 @@ const handleAutoRandomMove = (roomId) => {
             selection: myRoom.game.USER_SELECTION,
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
             lastMove: null,
+            lastPlayerId: null,
+            lastPlayerName: null,
             isRandom: true,
             turnDeadline: myRoom.turnDeadline
         });
         return;
     }
 
+    const actingPlayer = myRoom.players[myRoom.currentPlayer];
     const winners = getWinners(myRoom);
     clearTurnTimer(myRoom);
 
@@ -150,6 +153,8 @@ const handleAutoRandomMove = (roomId) => {
             selection: myRoom.game.USER_SELECTION,
             gameCount: myRoom.gameCount,
             lastMove: number,
+            lastPlayerId: actingPlayer?.playerId,
+            lastPlayerName: actingPlayer?.name,
             isRandom: true
         });
     }
@@ -162,6 +167,8 @@ const handleAutoRandomMove = (roomId) => {
         selection: myRoom.game.USER_SELECTION,
         currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
         lastMove: number,
+        lastPlayerId: actingPlayer?.playerId,
+        lastPlayerName: actingPlayer?.name,
         isRandom: true,
         turnDeadline: myRoom.turnDeadline
     };
@@ -335,6 +342,8 @@ io.on('connection', (socket) => {
                 selection: myRoom.game.USER_SELECTION,
                 gameCount: myRoom.gameCount,
                 lastMove: number,
+                lastPlayerId: me?.playerId,
+                lastPlayerName: me?.name,
                 isRandom: false
             })
         }
@@ -346,6 +355,8 @@ io.on('connection', (socket) => {
             selection: myRoom.game.USER_SELECTION,
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
             lastMove: number,
+            lastPlayerId: me?.playerId,
+            lastPlayerName: me?.name,
             isRandom: false,
             turnDeadline: myRoom.turnDeadline
         }

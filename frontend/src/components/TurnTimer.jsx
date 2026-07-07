@@ -2,15 +2,15 @@ import { useEffect, useState } from "react";
 
 const TurnTimer = ({ deadline, size = 58, strokeWidth = 3 }) => {
   const [progress, setProgress] = useState(1);
-  const [remaining, setRemaining] = useState(10000);
+  const [remaining, setRemaining] = useState(15000);
 
   useEffect(() => {
     if (!deadline) {
       setProgress(1);
-      setRemaining(10000);
+      setRemaining(15000);
       return;
     }
-    const total = 10000;
+    const total = 15000;
     const tick = () => {
       const now = Date.now();
       const rem = Math.max(0, deadline - now);
