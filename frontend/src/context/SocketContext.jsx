@@ -49,6 +49,11 @@ const SocketContextProvider = ({ children }) => {
   const [ownerPlayerId, setOwnerPlayerId] = useState(null);
   const [recentMoves, setRecentMoves] = useState({});
   const [turnDeadline, setTurnDeadline] = useState(null);
+  const [winsToReach, setWinsToReach] = useState(1);
+  const [maxPlayers, setMaxPlayers] = useState(5);
+  const [tournamentFinished, setTournamentFinished] = useState(false);
+  const [tournamentWinners, setTournamentWinners] = useState([]);
+  const [gameStartTime, setGameStartTime] = useState(null);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState(() => localStorage.getItem("bingo_player_name") || "");
   const [playerId] = useState(() => {
@@ -63,14 +68,6 @@ const SocketContextProvider = ({ children }) => {
   const navigate = useNavigate();
   const playersRef = useRef(players);
   playersRef.current = players;
-
-  const sortedPlayers = useMemo(() => {
-    const ME = players.find((p) => p.playerId === playerId);
-    if (!ME) {
-      return players;
-    }
-    return [ME, ...players.filter((p) => p.playerId !== playerId)];
-  }, [players, playerId]);
 
   const connectedCount = useMemo(
     () => players.filter((p) => p.connected).length,
@@ -141,7 +138,7 @@ const SocketContextProvider = ({ children }) => {
       toast.success("Reconnected!");
     });
 
-    socket.on("join-room", ({ players, roomId, selection, gameCount, started, ownerPlayerId, turnDeadline: td }) => {
+    socket.on("join-room", ({ players, roomId, selection, gameCount, started, ownerPlayerId, turnDeadline: td, maxPlayers: mp, winsToReach: bo, gameStartTime: gst }) => {
       setPlayers(players);
       setRoomId(roomId);
       setSelection(selection);
@@ -149,6 +146,9 @@ const SocketContextProvider = ({ children }) => {
       setStarted(started);
       setOwnerPlayerId(ownerPlayerId);
       setTurnDeadline(td);
+      if (mp != null) setMaxPlayers(mp);
+      if (bo != null) setWinsToReach(bo);
+      if (gst != null) setGameStartTime(gst);
       setLoading(false);
       audioManager.playJoin();
     });
@@ -172,6 +172,10 @@ const SocketContextProvider = ({ children }) => {
       myBoard,
       ownerPlayerId: oid,
       turnDeadline: td,
+      maxPlayers: mp,
+      winsToReach: bo,
+      tournamentFinished: tf,
+      gameStartTime: gst,
     }) => {
       setBoard(myBoard);
       setPlayers(p);
@@ -185,6 +189,10 @@ const SocketContextProvider = ({ children }) => {
       setOwnerPlayerId(oid);
       setTurnDeadline(td);
       setWinners(w || []);
+      if (mp != null) setMaxPlayers(mp);
+      if (bo != null) setWinsToReach(bo);
+      if (tf != null) setTournamentFinished(tf);
+      if (gst != null) setGameStartTime(gst);
       setLoading(false);
       navigate(`/game/${rid}`, { replace: true });
       toast.success("Rejoined the game!");
@@ -215,10 +223,13 @@ const SocketContextProvider = ({ children }) => {
       audioManager.playPop();
     });
 
-    socket.on("play-started", ({ currentPlayer: cp, started: st, turnDeadline: td }) => {
+    socket.on("play-started", ({ currentPlayer: cp, started: st, turnDeadline: td, winsToReach: bo, maxPlayers: mp, gameStartTime: gst }) => {
       setCurrentPlayer(cp);
       setStarted(st);
       setTurnDeadline(td);
+      if (bo != null) setWinsToReach(bo);
+      if (mp != null) setMaxPlayers(mp);
+      if (gst != null) setGameStartTime(gst);
       audioManager.playTurnBell();
     });
 
@@ -258,7 +269,7 @@ const SocketContextProvider = ({ children }) => {
       ));
     });
 
-    socket.on("game-over", ({ winners: w, players: p, selection: s, gameCount: gc, lastMove, lastPlayerId, lastPlayerName }) => {
+    socket.on("game-over", ({ winners: w, players: p, selection: s, gameCount: gc, lastMove, lastPlayerId, lastPlayerName, winsToReach: bo, tournamentFinished: tf, tournamentWinners: tw }) => {
       setPlayers(p);
       setSelection(s);
       setGameCount(gc);
@@ -273,6 +284,9 @@ const SocketContextProvider = ({ children }) => {
           });
         }, 2000);
       }
+      if (bo != null) setWinsToReach(bo);
+      if (tf != null) setTournamentFinished(tf);
+      if (tw != null) setTournamentWinners(tw);
       setFinished(true);
       setTurnDeadline(null);
 
@@ -286,13 +300,18 @@ const SocketContextProvider = ({ children }) => {
       }
     });
 
-    socket.on("play-restart", ({ myBoard, selection: s, currentPlayer: cp, gameCount: gc }) => {
+    socket.on("play-restart", ({ myBoard, selection: s, currentPlayer: cp, gameCount: gc, winsToReach: bo, tournamentFinished: tf, gameStartTime: gst, players: p }) => {
       setBoard(myBoard);
       setSelection(s);
       setCurrentPlayer(cp);
       setGameCount(gc);
+      if (p != null) setPlayers(p);
       setWinners([]);
       setFinished(false);
+      if (bo != null) setWinsToReach(bo);
+      if (tf != null) setTournamentFinished(tf);
+      if (tf === false) setTournamentWinners([]);
+      if (gst != null) setGameStartTime(gst);
       audioManager.playTurnBell();
     });
 
@@ -313,6 +332,12 @@ const SocketContextProvider = ({ children }) => {
       if (reaction.fromPlayerId !== playerId) {
         audioManager.playPop();
       }
+    });
+
+    socket.on("config-updated", ({ winsToReach: bo, maxPlayers: mp, players: p }) => {
+      if (bo != null) setWinsToReach(bo);
+      if (mp != null) setMaxPlayers(mp);
+      if (p != null) setPlayers(p);
     });
 
     return () => {
@@ -338,13 +363,22 @@ const SocketContextProvider = ({ children }) => {
     socketRef.current?.emit("kickPlayer", { targetPlayerId });
   };
 
+  const updateConfig = (config) => {
+    socketRef.current?.emit("updateConfig", config);
+  };
+
   return (
     <SocketContext.Provider
       value={{
         socketRef,
         board,
-        players: sortedPlayers,
+        players,
         roomId,
+        winsToReach,
+        maxPlayers,
+        tournamentFinished,
+        tournamentWinners,
+        gameStartTime,
         selection,
         currentPlayer,
         started,
@@ -366,6 +400,7 @@ const SocketContextProvider = ({ children }) => {
         sendReaction,
         playRandom,
         kickPlayer,
+        updateConfig,
       }}
     >
       {children}

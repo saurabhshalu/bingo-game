@@ -50,6 +50,28 @@ const getNextConnectedIndex = (room, startIndex) => {
 
 const getConnectedCount = (room) => room.players.filter(p => p.connected).length;
 
+const getPlayerBingoCount = (playerBoard, game) => {
+    const size = game.size;
+    const answers = [];
+    const diag1 = [];
+    const diag2 = [];
+    for (let i = 0; i < size; i++) {
+        const list1 = [];
+        const list2 = [];
+        for (let j = 0; j < size; j++) {
+            list1.push((i * size) + j + 1);
+            list2.push(i + 1 + (j * size));
+        }
+        answers.push(list1);
+        answers.push(list2);
+        diag1.push((i * size) + (i + 1));
+        diag2.push(size - i + (size * i));
+    }
+    answers.push(diag1);
+    answers.push(diag2);
+    return answers.filter(path => path.every(item => game.USER_SELECTION[playerBoard[item - 1]])).length;
+};
+
 const getWinners = ({ game, players }) => {
     const winners = [];
     players.forEach((player, index) => {
@@ -61,20 +83,31 @@ const getWinners = ({ game, players }) => {
         }
     })
     return winners;
-}
+};
 
 const getUnplayedNumbers = (game) => {
     return Object.keys(game.USER_SELECTION).filter(n => !game.USER_SELECTION[n]);
 };
 
-const serializePlayer = (p) => ({
+const serializePlayer = (p, game = null) => ({
     name: p.name,
     win: p.win,
     id: p.id,
     playerId: p.playerId,
     connected: p.connected,
-    color: p.color
+    color: p.color,
+    avatar: p.avatar || null,
+    bingoCount: game ? getPlayerBingoCount(p.board, game) : 0
 });
+
+const getTournamentWinners = (room) => {
+    if (!room.winsToReach || room.winsToReach <= 1) return null;
+    const maxWins = Math.max(...room.players.map(p => p.win));
+    if (maxWins >= room.winsToReach) {
+        return room.players.filter(p => p.win === maxWins);
+    }
+    return null;
+};
 
 const clearTurnTimer = (room) => {
     if (room.turnTimer) {
@@ -97,7 +130,7 @@ const startTurnTimer = (room, roomId) => {
 const broadcastTurnState = (room, roomId, extra = {}) => {
     const currentPlayerObj = room.players[room.currentPlayer];
     io.to(roomId).emit('turn-state', {
-        players: room.players.map(serializePlayer),
+        players: room.players.map(p => serializePlayer(p, room.game)),
         selection: room.game.USER_SELECTION,
         currentPlayer: currentPlayerObj?.id || null,
         turnDeadline: room.turnDeadline,
@@ -128,7 +161,7 @@ const handleAutoRandomMove = (roomId) => {
         myRoom.currentPlayer = getNextConnectedIndex(myRoom, myRoom.currentPlayer);
         startTurnTimer(myRoom, roomId);
         io.to(roomId).emit('play-move', {
-            players: myRoom.players.map(serializePlayer),
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
             selection: myRoom.game.USER_SELECTION,
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
             lastMove: null,
@@ -147,15 +180,20 @@ const handleAutoRandomMove = (roomId) => {
     if (winners.length > 0) {
         myRoom.finished = true;
         myRoom.winners = winners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId }));
+        const tournamentWinners = getTournamentWinners(myRoom);
+        if (tournamentWinners) myRoom.tournamentFinished = true;
         return io.to(roomId).emit('game-over', {
             winners: myRoom.winners,
-            players: myRoom.players.map(serializePlayer),
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
             selection: myRoom.game.USER_SELECTION,
             gameCount: myRoom.gameCount,
             lastMove: number,
             lastPlayerId: actingPlayer?.playerId,
             lastPlayerName: actingPlayer?.name,
-            isRandom: true
+            isRandom: true,
+            winsToReach: myRoom.winsToReach,
+            tournamentFinished: myRoom.tournamentFinished,
+            tournamentWinners: tournamentWinners ? tournamentWinners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId })) : null
         });
     }
 
@@ -163,7 +201,7 @@ const handleAutoRandomMove = (roomId) => {
     startTurnTimer(myRoom, roomId);
 
     const payload = {
-        players: myRoom.players.map(serializePlayer),
+        players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
         selection: myRoom.game.USER_SELECTION,
         currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
         lastMove: number,
@@ -185,6 +223,7 @@ const joinRoom = (socket, roomId, player, isRejoin = false) => {
         existing.id = socket.id;
         existing.connected = true;
         existing.name = player.name;
+        if (player.avatar) existing.avatar = player.avatar;
         SOCKET_ROOM_MAPPING[socket.id] = roomId;
 
         if (myRoom.started && !myRoom.finished && getConnectedCount(myRoom) >= 2 && !myRoom.turnTimer) {
@@ -193,7 +232,7 @@ const joinRoom = (socket, roomId, player, isRejoin = false) => {
 
         socket.emit('rejoined', {
             roomId,
-            players: myRoom.players.map(serializePlayer),
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
             selection: myRoom.game.USER_SELECTION,
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null,
             gameCount: myRoom.gameCount,
@@ -203,11 +242,15 @@ const joinRoom = (socket, roomId, player, isRejoin = false) => {
             chatHistory: myRoom.chatHistory,
             myBoard: existing.board,
             ownerPlayerId: myRoom.ownerPlayerId,
-            turnDeadline: myRoom.turnDeadline
+            turnDeadline: myRoom.turnDeadline,
+            maxPlayers: myRoom.max,
+            winsToReach: myRoom.winsToReach,
+            tournamentFinished: myRoom.tournamentFinished,
+            gameStartTime: myRoom.gameStartTime
         });
 
         socket.to(roomId).emit('player-rejoined', {
-            players: myRoom.players.map(serializePlayer),
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null,
             rejoinedPlayerId: existing.playerId,
             turnDeadline: myRoom.turnDeadline
@@ -222,7 +265,8 @@ const joinRoom = (socket, roomId, player, isRejoin = false) => {
             win: 0,
             board: myBoard,
             connected: true,
-            color: playerColor
+            color: playerColor,
+            avatar: player.avatar || null
         };
         myRoom.players.push(newPlayer);
         SOCKET_ROOM_MAPPING[socket.id] = roomId;
@@ -230,13 +274,16 @@ const joinRoom = (socket, roomId, player, isRejoin = false) => {
         socket.emit('my-board', { myBoard, roomId });
         io.to(roomId).emit('join-room', {
             roomId,
-            players: myRoom.players.map(serializePlayer),
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
             selection: myRoom.game.USER_SELECTION,
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null,
             gameCount: myRoom.gameCount,
             started: myRoom.started,
             ownerPlayerId: myRoom.ownerPlayerId,
-            turnDeadline: myRoom.turnDeadline
+            turnDeadline: myRoom.turnDeadline,
+            maxPlayers: myRoom.max,
+            winsToReach: myRoom.winsToReach,
+            gameStartTime: myRoom.gameStartTime
         });
     }
 }
@@ -255,13 +302,17 @@ io.on('connection', (socket) => {
             })
         }
 
-        const game = new BingoGame({ size: player.maxPlayers });
+        const maxPlayers = Math.min(Math.max(player.maxPlayers || 5, 2), 10);
+        const winsToReach = Math.min(Math.max(player.winsToReach || 1, 1), 51);
+        const game = new BingoGame({ size: maxPlayers });
 
         ROOMS[roomId] = {
             game,
             players: [],
             min: 2,
-            max: player.maxPlayers || 5,
+            max: maxPlayers,
+            winsToReach: winsToReach,
+            tournamentFinished: false,
             owner: socket.id,
             ownerPlayerId: player.playerId,
             started: false,
@@ -271,7 +322,8 @@ io.on('connection', (socket) => {
             winners: [],
             chatHistory: [],
             turnTimer: null,
-            turnDeadline: null
+            turnDeadline: null,
+            gameStartTime: null
         }
 
         joinRoom(socket, roomId, player, false);
@@ -336,22 +388,27 @@ io.on('connection', (socket) => {
         if (winners.length > 0) {
             myRoom.finished = true;
             myRoom.winners = winners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId }));
+            const tournamentWinners = getTournamentWinners(myRoom);
+            if (tournamentWinners) myRoom.tournamentFinished = true;
             return io.to(roomId).emit('game-over', {
                 winners: myRoom.winners,
-                players: myRoom.players.map(serializePlayer),
+                players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
                 selection: myRoom.game.USER_SELECTION,
                 gameCount: myRoom.gameCount,
                 lastMove: number,
                 lastPlayerId: me?.playerId,
                 lastPlayerName: me?.name,
-                isRandom: false
+                isRandom: false,
+                winsToReach: myRoom.winsToReach,
+                tournamentFinished: myRoom.tournamentFinished,
+                tournamentWinners: tournamentWinners ? tournamentWinners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId })) : null
             })
         }
         myRoom.currentPlayer = getNextConnectedIndex(myRoom, myRoom.currentPlayer);
         startTurnTimer(myRoom, roomId);
 
         const payload = {
-            players: myRoom.players.map(serializePlayer),
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
             selection: myRoom.game.USER_SELECTION,
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
             lastMove: number,
@@ -366,7 +423,8 @@ io.on('connection', (socket) => {
     socket.on('playRandom', () => {
         const roomId = SOCKET_ROOM_MAPPING[socket.id];
         const myRoom = ROOMS[roomId];
-        if (!myRoom || myRoom.finished || !myRoom.started) return;
+        if (!myRoom) return;
+        if (myRoom.finished || !myRoom.started) return;
 
         const me = myRoom.players.find(p => p.id === socket.id);
         if (!me) return;
@@ -412,7 +470,7 @@ io.on('connection', (socket) => {
         io.to(roomId).emit('player-kicked', {
             kickedName: target.name,
             kickedPlayerId: target.playerId,
-            players: myRoom.players.map(serializePlayer),
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null,
             selection: myRoom.game.USER_SELECTION,
             ownerPlayerId: myRoom.ownerPlayerId
@@ -422,6 +480,9 @@ io.on('connection', (socket) => {
     socket.on('playStart', () => {
         const roomId = SOCKET_ROOM_MAPPING[socket.id];
         const myRoom = ROOMS[roomId];
+        if (!myRoom) {
+            return socket.emit('error', { message: "Room not found, please join again" });
+        }
         if (myRoom.started) {
             return socket.emit('error', { message: 'Game already started' });
         }
@@ -440,18 +501,26 @@ io.on('connection', (socket) => {
         }
 
         myRoom.started = true;
+        myRoom.gameStartTime = Date.now();
         startTurnTimer(myRoom, roomId);
 
         io.to(roomId).emit('play-started', {
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
             started: true,
-            turnDeadline: myRoom.turnDeadline
+            turnDeadline: myRoom.turnDeadline,
+            winsToReach: myRoom.winsToReach,
+            maxPlayers: myRoom.max,
+            gameStartTime: myRoom.gameStartTime
         })
     })
 
     socket.on('playRestart', () => {
         const roomId = SOCKET_ROOM_MAPPING[socket.id];
         const myRoom = ROOMS[roomId];
+
+        if (!myRoom) {
+            return socket.emit('error', { message: "Room not found, please join again" });
+        }
 
         const me = myRoom.players.find(p => p.id === socket.id);
         if (!me || me.playerId !== myRoom.ownerPlayerId) {
@@ -467,7 +536,15 @@ io.on('connection', (socket) => {
         myRoom.finished = false;
         myRoom.winners = [];
         myRoom.game.restart();
-        myRoom.gameCount += 1;
+
+        if (myRoom.tournamentFinished) {
+            myRoom.tournamentFinished = false;
+            myRoom.gameCount = 1;
+            myRoom.players.forEach(p => p.win = 0);
+            myRoom.gameStartTime = Date.now();
+        } else {
+            myRoom.gameCount += 1;
+        }
 
         myRoom.players.forEach((player) => {
             const board = myRoom.game.prepareBlankChart();
@@ -477,11 +554,39 @@ io.on('connection', (socket) => {
                     myBoard: board,
                     selection: myRoom.game.USER_SELECTION,
                     currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
-                    gameCount: myRoom.gameCount
+                    gameCount: myRoom.gameCount,
+                    winsToReach: myRoom.winsToReach,
+                    tournamentFinished: myRoom.tournamentFinished,
+                    gameStartTime: myRoom.gameStartTime,
+                    players: myRoom.players.map(p => serializePlayer(p, myRoom.game))
                 })
             }
         });
         startTurnTimer(myRoom, roomId);
+    })
+
+    socket.on('updateConfig', ({ winsToReach }) => {
+        const roomId = SOCKET_ROOM_MAPPING[socket.id];
+        const myRoom = ROOMS[roomId];
+        if (!myRoom) return;
+
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me || me.playerId !== myRoom.ownerPlayerId) {
+            return socket.emit('error', { message: "Only owner can change settings" });
+        }
+        if (myRoom.started && !myRoom.finished) {
+            return socket.emit('error', { message: "Cannot change settings during active game" });
+        }
+
+        if (winsToReach != null) {
+            myRoom.winsToReach = Math.min(Math.max(winsToReach, 1), 51);
+        }
+
+        io.to(roomId).emit('config-updated', {
+            winsToReach: myRoom.winsToReach,
+            maxPlayers: myRoom.max,
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game))
+        });
     })
 
     socket.on('chat:message', ({ text }) => {
@@ -570,7 +675,7 @@ io.on('connection', (socket) => {
         const payload = {
             leftPlayerName: leftPlayer.name,
             leftPlayerId: leftPlayer.playerId,
-            players: myRoom.players.map(serializePlayer),
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
             selection: myRoom.game.USER_SELECTION,
             currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
             owner: myRoom.owner,

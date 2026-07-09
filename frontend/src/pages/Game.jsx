@@ -12,6 +12,7 @@ import ChatPanel from "../components/ChatPanel";
 import TurnTimer from "../components/TurnTimer";
 import { LogOut } from "lucide-react";
 import { audioManager } from "../helper/audio.js";
+import ConfettiEffect from "../components/ConfettiEffect.jsx";
 
 const getCorrectAnswerList = (size = 5) => {
   const answers = { horizontal: [], vertical: [], diagonal1: [], diagonal2: [] };
@@ -29,6 +30,19 @@ const getCorrectAnswerList = (size = 5) => {
   return answers;
 };
 
+const getPlayerBingoCount = (playerBoard, userSelection, boardSize) => {
+  const answers = getCorrectAnswerList(boardSize);
+  const allLines = [
+    ...answers.horizontal,
+    ...answers.vertical,
+    answers.diagonal1,
+    answers.diagonal2,
+  ];
+  return allLines.filter((path) =>
+    path.every((item) => userSelection[playerBoard[item - 1]])
+  ).length;
+};
+
 const QUICK_EMOJIS = ["😂","😭","🎉","🏆","👏","🔥","💔","🤯","😮","🚀"];
 const ALL_EMOJIS = [
   "😂","🔥","👏","🎉","😮","🚀","🤯","⚡","🎯","🏆",
@@ -41,11 +55,13 @@ const Game = () => {
     board, socketRef, selection, roomId, players, currentPlayer,
     started, finished, winners, gameCount, playerId, ownerPlayerId,
     connectedCount, loading, turnDeadline, reactions, chatFlashes, recentMoves,
+    winsToReach, tournamentFinished, tournamentWinners, gameStartTime, updateConfig,
     sendReaction, playRandom, kickPlayer,
   } = useContext(SocketContext);
 
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [showExitDialog, setShowExitDialog] = useState(false);
+  const [elapsedTime, setElapsedTime] = useState(0);
   const prevBingoLength = useRef(0);
   const hasActedRef = useRef(false);
 
@@ -79,6 +95,21 @@ const Game = () => {
     vv.addEventListener('resize', onResize);
     return () => vv.removeEventListener('resize', onResize);
   }, []);
+
+  // Elapsed game timer
+  useEffect(() => {
+    if (!gameStartTime || tournamentFinished) { setElapsedTime(0); return; }
+    const tick = () => setElapsedTime(Math.floor((Date.now() - gameStartTime) / 1000));
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [gameStartTime, tournamentFinished]);
+
+  const formatElapsed = (sec) => {
+    const m = Math.floor(sec / 60).toString().padStart(2, "0");
+    const s = (sec % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  };
 
   // 10s turn timer — auto-play random when expired
   useEffect(() => {
@@ -124,8 +155,16 @@ const Game = () => {
   const isOwner = playerId === ownerPlayerId;
   const currentPlayerObj = players.find((p) => p.id === currentPlayer);
 
+  const roundWinConfetti = finished && !tournamentFinished && winners.some((w) => w.playerId === playerId);
+  const tournamentConfetti = tournamentFinished && tournamentWinners.some((w) => w.playerId === playerId);
+
+  const winsNeeded = winsToReach > 1 ? winsToReach : 1;
+  const showingTournamentWin = tournamentFinished && tournamentWinners.length > 0;
+
   return (
     <>
+      <ConfettiEffect trigger={roundWinConfetti} mode="round" />
+      <ConfettiEffect trigger={tournamentConfetti} mode="tournament" />
       <VolumeToggle />
       <button
         onClick={() => setShowExitDialog(true)}
@@ -141,18 +180,53 @@ const Game = () => {
         className="min-h-[100dvh] m-auto flex flex-col gap-4 pb-6 items-center"
       >
         {/* Header */}
-        <div className="pt-4 text-center">
-          <h1 className="text-5xl sm:text-6xl englebert-regular text-neutral-50">
+        <div className="pt-3 text-center w-full px-3">
+          <h1 className="text-4xl sm:text-5xl englebert-regular text-neutral-50 leading-tight">
             <span className={`transition-colors ${BINGO_LENGTH > 0 ? "text-amber-300" : ""}`}>B</span>
             <span className={`transition-colors ${BINGO_LENGTH > 1 ? "text-amber-300" : ""}`}>I</span>
             <span className={`transition-colors ${BINGO_LENGTH > 2 ? "text-amber-300" : ""}`}>N</span>
             <span className={`transition-colors ${BINGO_LENGTH > 3 ? "text-amber-300" : ""}`}>G</span>
             <span className={`transition-colors ${BINGO_LENGTH > 4 ? "text-amber-300" : ""}`}>O</span>
-            <span className="text-neutral-300"> Extended</span>
+            <span className="text-neutral-300 text-2xl sm:text-3xl"> Extended</span>
           </h1>
-          <div style={{ fontFamily: "monospace" }} className="text-amber-100 flex gap-4 text-center justify-center mt-1 text-sm">
-            <div>Room: {roomId} <button onClick={copyInviteLink} className="hover:text-white ml-1">📋</button></div>
-            <div>Game #{gameCount}</div>
+
+          {/* Info row */}
+          <div className="flex flex-col items-center mt-1.5 gap-0.5">
+            {/* Line 1: Room + total games */}
+            <div className="flex items-center gap-2 text-[11px] text-neutral-400">
+              <span>Room {roomId} <button onClick={copyInviteLink} className="hover:text-white">📋</button></span>
+              <span className="text-neutral-600">|</span>
+              <span className="text-neutral-300">Games played: {gameCount}</span>
+            </div>
+            {/* Line 2: Target + timer */}
+            <div className="flex items-center gap-2 text-[11px]">
+              {winsToReach > 1 ? (
+                <span className="text-green-300">Target: {winsToReach} wins</span>
+              ) : (
+                <span className="text-neutral-500">Single round</span>
+              )}
+              {gameStartTime && (
+                <>
+                  <span className="text-neutral-600">|</span>
+                  <span className="text-amber-200 font-mono">⏱ {formatElapsed(elapsedTime)}</span>
+                </>
+              )}
+              {isOwner && !started && (
+                <>
+                  <span className="text-neutral-600">|</span>
+                  <select
+                    value={winsToReach}
+                    onChange={(e) => updateConfig({ winsToReach: parseInt(e.target.value, 10) })}
+                    className="bg-neutral-800/80 text-white text-[10px] rounded px-1.5 py-0.5 outline-none cursor-pointer border border-neutral-600"
+                  >
+                    <option value={1}>Single</option>
+                    {Array.from({length: 30}, (_, i) => i + 2).map(n => (
+                      <option key={n} value={n}>First to {n}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
@@ -184,7 +258,11 @@ const Game = () => {
                           opacity: player.connected ? 1 : 0.4,
                           border: isMe ? "2px solid white" : "none",
                         }}>
-                          <span className="text-sm font-bold">{player.name.split(" ").map((i) => i[0]).join("")}</span>
+                          {player.avatar ? (
+                            <span className="text-2xl">{player.avatar}</span>
+                          ) : (
+                            <span className="text-sm font-bold">{player.name.split(" ").map((i) => i[0]).join("")}</span>
+                          )}
                         </Avatar>
                       </button>
                     </Badge>
@@ -220,6 +298,17 @@ const Game = () => {
                 <span className={`text-[10px] mt-0.5 truncate max-w-[48px] ${isMe ? "text-white font-medium" : "text-neutral-400"}`}>
                   {isMe ? "You" : player.name.split(" ")[0]}
                 </span>
+                {started && (
+                  <div
+                    className="mt-0.5 px-1.5 py-[1px] rounded-full text-[9px] font-bold"
+                    style={{
+                      backgroundColor: `${player.color || "#666"}30`,
+                      color: player.color || "#666",
+                    }}
+                  >
+                    {player.bingoCount || 0} lines
+                  </div>
+                )}
               </div>
             );
           })}
@@ -247,10 +336,32 @@ const Game = () => {
             aspectRatio: '1 / 1',
           }}
         >
-          {board.map((item, index) => (
-            <Block number={item} key={item} handleClick={() => playMove(item)}
-              selection={selection} index={index} CORRECT_ANSWER_LIST={CORRECT_ANSWER_LIST} />
-          ))}
+          {board.map((item, index) => {
+            const recentMoverColor = (() => {
+              for (const [pid, data] of Object.entries(recentMoves)) {
+                if (data.number === item && Date.now() - data.time < 2000) {
+                  const mover = players.find((p) => p.playerId === pid);
+                  return mover?.color || "#666";
+                }
+              }
+              return null;
+            })();
+            return (
+              <div key={item} className="relative">
+                <Block number={item} handleClick={() => playMove(item)}
+                  selection={selection} index={index} CORRECT_ANSWER_LIST={CORRECT_ANSWER_LIST} />
+                {recentMoverColor && (
+                  <motion.div
+                    className="absolute inset-0 rounded-sm pointer-events-none z-10"
+                    style={{ border: `3px solid ${recentMoverColor}` }}
+                    initial={{ scale: 1, opacity: 1 }}
+                    animate={{ scale: [1, 1.15, 1], opacity: [1, 0.8, 0] }}
+                    transition={{ duration: 1.5, ease: "easeOut" }}
+                  />
+                )}
+              </div>
+            );
+          })}
 
           {started && !finished && connectedCount < 2 && (
             <div className="absolute inset-0 flex items-center justify-center z-10">
@@ -261,8 +372,8 @@ const Game = () => {
           )}
 
           {winners.length === 0 && started && !finished && !isMyTurn && connectedCount >= 2 && (
-            <div className="absolute inset-0 bg-black/20 z-10 flex items-start justify-center">
-              <span className="bg-black/70 text-white px-5 py-1 rounded-full text-sm shadow-xl backdrop-blur-sm -translate-y-1/2" style={{ WebkitBackdropFilter: 'blur(4px)' }}>
+            <div className="absolute inset-0 bg-black/60 z-10 flex items-center justify-center">
+              <span className="bg-black/20 text-white px-5 py-2 rounded-full text-sm shadow-xl" style={{ WebkitBackdropFilter: 'blur(4px)' }}>
                 Wait for <b>{currentPlayerObj?.name || "…"}</b>&apos;s turn
               </span>
             </div>
