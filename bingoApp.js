@@ -18,36 +18,64 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use(express.static(path.join(__dirname, "build")));
 app.use(express.static("public"));
 
+// SPA fallback so /game/:roomId works on refresh
+app.get('/game/*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'build', 'index.html'));
+});
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'build', 'index.html'));
+});
+
 const ROOMS = {}
 const SOCKET_ROOM_MAPPING = {}
 
-const joinRoom = (socket, roomId, player) => {
+const PLAYER_COLORS = [
+    '#EF4444', '#F97316', '#F59E0B', '#10B981',
+    '#06B6D4', '#3B82F6', '#6366F1', '#8B5CF6', '#EC4899'
+];
+const getRandomColor = () => PLAYER_COLORS[Math.floor(Math.random() * PLAYER_COLORS.length)];
 
-    socket.join(roomId);
-    const myRoom = ROOMS[roomId];
-    const myBoard = myRoom.game.prepareBlankChart();
-    myRoom.players.push({
-        name: player.name,
-        id: socket.id,
-        win: 0,
-        board: myBoard
-    })
+const getNextConnectedIndex = (room, startIndex) => {
+    const len = room.players.length;
+    if (len === 0) return 0;
+    if (room.players.every(p => !p.connected)) return startIndex % len;
+    let idx = (startIndex + 1) % len;
+    let attempts = 0;
+    while ((!room.players[idx] || !room.players[idx].connected) && attempts < len) {
+        idx = (idx + 1) % len;
+        attempts++;
+    }
+    return idx;
+};
 
-    SOCKET_ROOM_MAPPING[socket.id] = roomId;
+const getConnectedCount = (room) => room.players.filter(p => p.connected).length;
 
-    io.to(roomId).emit('join-room', {
-        roomId,
-        players: myRoom.players.map(i => ({ name: i.name, win: i.win, id: i.id })),
-        selection: myRoom.game.USER_SELECTION,
-        currentPlayer: myRoom.players[myRoom.currentPlayer].id
-    })
-    socket.emit('my-board', myBoard);
-}
-
+const getPlayerBingoCount = (playerBoard, game) => {
+    const size = game.size;
+    const answers = [];
+    const diag1 = [];
+    const diag2 = [];
+    for (let i = 0; i < size; i++) {
+        const list1 = [];
+        const list2 = [];
+        for (let j = 0; j < size; j++) {
+            list1.push((i * size) + j + 1);
+            list2.push(i + 1 + (j * size));
+        }
+        answers.push(list1);
+        answers.push(list2);
+        diag1.push((i * size) + (i + 1));
+        diag2.push(size - i + (size * i));
+    }
+    answers.push(diag1);
+    answers.push(diag2);
+    return answers.filter(path => path.every(item => game.USER_SELECTION[playerBoard[item - 1]])).length;
+};
 
 const getWinners = ({ game, players }) => {
     const winners = [];
     players.forEach((player, index) => {
+        if (!player.connected) return;
         const { bingo } = game.evaluateTable(player.board);
         if (bingo) {
             players[index].win += 1;
@@ -55,8 +83,210 @@ const getWinners = ({ game, players }) => {
         }
     })
     return winners;
-}
+};
 
+const getUnplayedNumbers = (game) => {
+    return Object.keys(game.USER_SELECTION).filter(n => !game.USER_SELECTION[n]);
+};
+
+const serializePlayer = (p, game = null) => ({
+    name: p.name,
+    win: p.win,
+    id: p.id,
+    playerId: p.playerId,
+    connected: p.connected,
+    color: p.color,
+    avatar: p.avatar || null,
+    bingoCount: game ? getPlayerBingoCount(p.board, game) : 0
+});
+
+const getTournamentWinners = (room) => {
+    if (!room.winsToReach || room.winsToReach <= 1) return null;
+    const maxWins = Math.max(...room.players.map(p => p.win));
+    if (maxWins >= room.winsToReach) {
+        return room.players.filter(p => p.win === maxWins);
+    }
+    return null;
+};
+
+const clearTurnTimer = (room) => {
+    if (room.turnTimer) {
+        clearTimeout(room.turnTimer);
+        room.turnTimer = null;
+    }
+    room.turnDeadline = null;
+};
+
+const startTurnTimer = (room, roomId) => {
+    clearTurnTimer(room);
+    if (getConnectedCount(room) < 2) return;
+    const TURN_DURATION = 15000; // 10 seconds
+    room.turnDeadline = Date.now() + TURN_DURATION;
+    room.turnTimer = setTimeout(() => {
+        handleAutoRandomMove(roomId);
+    }, TURN_DURATION);
+};
+
+const broadcastTurnState = (room, roomId, extra = {}) => {
+    const currentPlayerObj = room.players[room.currentPlayer];
+    io.to(roomId).emit('turn-state', {
+        players: room.players.map(p => serializePlayer(p, room.game)),
+        selection: room.game.USER_SELECTION,
+        currentPlayer: currentPlayerObj?.id || null,
+        turnDeadline: room.turnDeadline,
+        started: room.started,
+        finished: room.finished,
+        gameCount: room.gameCount,
+        ...extra
+    });
+};
+
+const handleAutoRandomMove = (roomId) => {
+    const myRoom = ROOMS[roomId];
+    if (!myRoom || myRoom.finished || !myRoom.started) return;
+    if (getConnectedCount(myRoom) < 2) {
+        clearTurnTimer(myRoom);
+        return;
+    }
+
+    const unplayed = getUnplayedNumbers(myRoom.game);
+    if (unplayed.length === 0) return;
+
+    const randomNumber = unplayed[Math.floor(Math.random() * unplayed.length)];
+    const number = Number(randomNumber);
+
+    const validPlay = myRoom.game.play(number);
+    if (!validPlay) {
+        // Number was somehow already played — just advance turn
+        myRoom.currentPlayer = getNextConnectedIndex(myRoom, myRoom.currentPlayer);
+        startTurnTimer(myRoom, roomId);
+        io.to(roomId).emit('play-move', {
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
+            selection: myRoom.game.USER_SELECTION,
+            currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
+            lastMove: null,
+            lastPlayerId: null,
+            lastPlayerName: null,
+            isRandom: true,
+            turnDeadline: myRoom.turnDeadline
+        });
+        return;
+    }
+
+    const actingPlayer = myRoom.players[myRoom.currentPlayer];
+    const winners = getWinners(myRoom);
+    clearTurnTimer(myRoom);
+
+    if (winners.length > 0) {
+        myRoom.finished = true;
+        myRoom.winners = winners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId }));
+        const tournamentWinners = getTournamentWinners(myRoom);
+        if (tournamentWinners) myRoom.tournamentFinished = true;
+        return io.to(roomId).emit('game-over', {
+            winners: myRoom.winners,
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
+            selection: myRoom.game.USER_SELECTION,
+            gameCount: myRoom.gameCount,
+            lastMove: number,
+            lastPlayerId: actingPlayer?.playerId,
+            lastPlayerName: actingPlayer?.name,
+            isRandom: true,
+            winsToReach: myRoom.winsToReach,
+            tournamentFinished: myRoom.tournamentFinished,
+            tournamentWinners: tournamentWinners ? tournamentWinners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId })) : null
+        });
+    }
+
+    myRoom.currentPlayer = getNextConnectedIndex(myRoom, myRoom.currentPlayer);
+    startTurnTimer(myRoom, roomId);
+
+    const payload = {
+        players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
+        selection: myRoom.game.USER_SELECTION,
+        currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
+        lastMove: number,
+        lastPlayerId: actingPlayer?.playerId,
+        lastPlayerName: actingPlayer?.name,
+        isRandom: true,
+        turnDeadline: myRoom.turnDeadline
+    };
+    io.to(roomId).emit('play-move', payload);
+};
+
+const joinRoom = (socket, roomId, player, isRejoin = false) => {
+    socket.join(roomId);
+    const myRoom = ROOMS[roomId];
+    const existingIdx = myRoom.players.findIndex(p => p.playerId === player.playerId);
+
+    if (isRejoin && existingIdx !== -1) {
+        const existing = myRoom.players[existingIdx];
+        existing.id = socket.id;
+        existing.connected = true;
+        existing.name = player.name;
+        if (player.avatar) existing.avatar = player.avatar;
+        SOCKET_ROOM_MAPPING[socket.id] = roomId;
+
+        if (myRoom.started && !myRoom.finished && getConnectedCount(myRoom) >= 2 && !myRoom.turnTimer) {
+            startTurnTimer(myRoom, roomId);
+        }
+
+        socket.emit('rejoined', {
+            roomId,
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
+            selection: myRoom.game.USER_SELECTION,
+            currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null,
+            gameCount: myRoom.gameCount,
+            started: myRoom.started,
+            finished: myRoom.finished,
+            winners: myRoom.winners,
+            chatHistory: myRoom.chatHistory,
+            myBoard: existing.board,
+            ownerPlayerId: myRoom.ownerPlayerId,
+            turnDeadline: myRoom.turnDeadline,
+            maxPlayers: myRoom.max,
+            winsToReach: myRoom.winsToReach,
+            tournamentFinished: myRoom.tournamentFinished,
+            gameStartTime: myRoom.gameStartTime
+        });
+
+        socket.to(roomId).emit('player-rejoined', {
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
+            currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null,
+            rejoinedPlayerId: existing.playerId,
+            turnDeadline: myRoom.turnDeadline
+        })
+    } else {
+        const myBoard = myRoom.game.prepareBlankChart();
+        const playerColor = player.color || getRandomColor();
+        const newPlayer = {
+            name: player.name,
+            id: socket.id,
+            playerId: player.playerId,
+            win: 0,
+            board: myBoard,
+            connected: true,
+            color: playerColor,
+            avatar: player.avatar || null
+        };
+        myRoom.players.push(newPlayer);
+        SOCKET_ROOM_MAPPING[socket.id] = roomId;
+
+        socket.emit('my-board', { myBoard, roomId });
+        io.to(roomId).emit('join-room', {
+            roomId,
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
+            selection: myRoom.game.USER_SELECTION,
+            currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null,
+            gameCount: myRoom.gameCount,
+            started: myRoom.started,
+            ownerPlayerId: myRoom.ownerPlayerId,
+            turnDeadline: myRoom.turnDeadline,
+            maxPlayers: myRoom.max,
+            winsToReach: myRoom.winsToReach,
+            gameStartTime: myRoom.gameStartTime
+        });
+    }
+}
 
 io.on('connection', (socket) => {
     socket.on('createRoom', (player) => {
@@ -68,41 +298,58 @@ io.on('connection', (socket) => {
         }
         if (player.maxPlayers && player.maxPlayers < 2) {
             return socket.emit("error", {
-                message: "Atleast 2 players are required"
+                message: "At least 2 players are required"
             })
         }
 
-        const game = new BingoGame({ size: player.maxPlayers });
+        const maxPlayers = Math.min(Math.max(player.maxPlayers || 5, 2), 10);
+        const winsToReach = Math.min(Math.max(player.winsToReach || 1, 1), 51);
+        const game = new BingoGame({ size: maxPlayers });
 
         ROOMS[roomId] = {
             game,
             players: [],
             min: 2,
-            max: player.maxPlayers || 5,
+            max: maxPlayers,
+            winsToReach: winsToReach,
+            tournamentFinished: false,
             owner: socket.id,
+            ownerPlayerId: player.playerId,
             started: false,
-            currentPlayer: 0
+            currentPlayer: 0,
+            finished: false,
+            gameCount: 1,
+            winners: [],
+            chatHistory: [],
+            turnTimer: null,
+            turnDeadline: null,
+            gameStartTime: null
         }
 
-        joinRoom(socket, roomId, player);
-
-
+        joinRoom(socket, roomId, player, false);
     })
 
     socket.on('joinRoom', (player) => {
-        const roomId = player.roomId;
+        const roomId = player.roomId?.toString().trim();
         if (!roomId || !ROOMS[roomId]) {
             return socket.emit('error', { message: "Room does not exist" });
         }
         const myRoom = ROOMS[roomId];
+        const existingPlayer = myRoom.players.find(p => p.playerId === player.playerId);
+
+        if (existingPlayer) {
+            // Always allow same playerId to rejoin — old socket will disconnect/clean up on its own
+            return joinRoom(socket, roomId, player, true);
+        }
+
         if (myRoom.started) {
             return socket.emit('error', { message: "Game has already been started" })
         }
-        if (myRoom.players.length >= myRoom.max) {
+        if (getConnectedCount(myRoom) >= myRoom.max) {
             return socket.emit('error', { message: "Room is full" })
         }
 
-        joinRoom(socket, roomId, player)
+        joinRoom(socket, roomId, player, false);
     })
 
     socket.on('playMove', (number) => {
@@ -111,12 +358,24 @@ io.on('connection', (socket) => {
         if (!myRoom) {
             return socket.emit('error', { message: "Room not found, please join again" })
         }
+        if (myRoom.finished) {
+            return socket.emit('error', { message: 'Game already finished' });
+        }
         if (!myRoom.started) {
             return socket.emit('error', { message: "The game has not started yet" })
         }
 
-        if (myRoom.players[myRoom.currentPlayer]?.id !== socket.id) {
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me || !me.connected) {
+            return socket.emit('error', { message: 'Not in game' });
+        }
+
+        const currentPlayerObj = myRoom.players[myRoom.currentPlayer];
+        if (!currentPlayerObj || currentPlayerObj.id !== socket.id) {
             return socket.emit('error', { message: 'Wait for your turn please' })
+        }
+        if (myRoom.game.USER_SELECTION[number]) {
+            return socket.emit('error', { message: 'Number already played' });
         }
         const validPlay = myRoom.game.play(number);
         if (!validPlay) {
@@ -124,51 +383,251 @@ io.on('connection', (socket) => {
         }
 
         const winners = getWinners(myRoom);
+        clearTurnTimer(myRoom);
 
         if (winners.length > 0) {
+            myRoom.finished = true;
+            myRoom.winners = winners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId }));
+            const tournamentWinners = getTournamentWinners(myRoom);
+            if (tournamentWinners) myRoom.tournamentFinished = true;
             return io.to(roomId).emit('game-over', {
-                winners: winners.map(i => ({ id: i.id, name: i.name, win: i.win })),
-                players: Object.values(myRoom.players).map(i => ({ name: i.name, win: i.win, id: i.id })),
-                selection: myRoom.game.USER_SELECTION
+                winners: myRoom.winners,
+                players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
+                selection: myRoom.game.USER_SELECTION,
+                gameCount: myRoom.gameCount,
+                lastMove: number,
+                lastPlayerId: me?.playerId,
+                lastPlayerName: me?.name,
+                isRandom: false,
+                winsToReach: myRoom.winsToReach,
+                tournamentFinished: myRoom.tournamentFinished,
+                tournamentWinners: tournamentWinners ? tournamentWinners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId })) : null
             })
         }
-        myRoom.currentPlayer = (myRoom.currentPlayer + 1) % myRoom.players.length;
+        myRoom.currentPlayer = getNextConnectedIndex(myRoom, myRoom.currentPlayer);
+        startTurnTimer(myRoom, roomId);
+
         const payload = {
-            players: Object.values(myRoom.players).map(i => ({ name: i.name, win: i.win, id: i.id })),
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
             selection: myRoom.game.USER_SELECTION,
-            currentPlayer: myRoom.players[myRoom.currentPlayer].id
+            currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
+            lastMove: number,
+            lastPlayerId: me?.playerId,
+            lastPlayerName: me?.name,
+            isRandom: false,
+            turnDeadline: myRoom.turnDeadline
         }
         io.to(roomId).emit('play-move', payload)
     })
 
+    socket.on('playRandom', () => {
+        const roomId = SOCKET_ROOM_MAPPING[socket.id];
+        const myRoom = ROOMS[roomId];
+        if (!myRoom) return;
+        if (myRoom.finished || !myRoom.started) return;
+
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me) return;
+        const currentPlayerObj = myRoom.players[myRoom.currentPlayer];
+        if (!currentPlayerObj || currentPlayerObj.playerId !== me.playerId) return;
+
+        handleAutoRandomMove(roomId);
+    });
+
+    socket.on('kickPlayer', ({ targetPlayerId }) => {
+        const roomId = SOCKET_ROOM_MAPPING[socket.id];
+        const myRoom = ROOMS[roomId];
+        if (!myRoom) return;
+
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me || me.playerId !== myRoom.ownerPlayerId) {
+            return socket.emit('error', { message: "Only owner can kick players" });
+        }
+
+        const targetIdx = myRoom.players.findIndex(p => p.playerId === targetPlayerId);
+        if (targetIdx === -1) return;
+        const target = myRoom.players[targetIdx];
+        if (target.connected) {
+            return socket.emit('error', { message: "Can only kick disconnected players" });
+        }
+
+        // Remove player
+        myRoom.players.splice(targetIdx, 1);
+
+        // Adjust currentPlayer index if needed
+        if (targetIdx < myRoom.currentPlayer) {
+            myRoom.currentPlayer -= 1;
+        }
+        if (myRoom.currentPlayer >= myRoom.players.length) {
+            myRoom.currentPlayer = 0;
+        }
+
+        if (myRoom.players.length === 0) {
+            delete ROOMS[roomId];
+            return;
+        }
+
+        io.to(roomId).emit('player-kicked', {
+            kickedName: target.name,
+            kickedPlayerId: target.playerId,
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
+            currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null,
+            selection: myRoom.game.USER_SELECTION,
+            ownerPlayerId: myRoom.ownerPlayerId
+        });
+    });
+
     socket.on('playStart', () => {
         const roomId = SOCKET_ROOM_MAPPING[socket.id];
         const myRoom = ROOMS[roomId];
-        if (myRoom.owner !== socket.id) {
+        if (!myRoom) {
+            return socket.emit('error', { message: "Room not found, please join again" });
+        }
+        if (myRoom.started) {
+            return socket.emit('error', { message: 'Game already started' });
+        }
+
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me || me.playerId !== myRoom.ownerPlayerId) {
             return socket.emit('error', { message: "Only owner can start the game" })
         }
-        myRoom.currentPlayer = myRoom.players.findIndex(x => x.id === socket.id) || 0;
+        if (getConnectedCount(myRoom) < 2) {
+            return socket.emit('error', { message: "At least 2 players are required to play" });
+        }
+
+        myRoom.currentPlayer = myRoom.players.findIndex(p => p.playerId === myRoom.ownerPlayerId);
+        if (!myRoom.players[myRoom.currentPlayer]?.connected) {
+            myRoom.currentPlayer = myRoom.players.findIndex(p => p.connected);
+        }
+
         myRoom.started = true;
+        myRoom.gameStartTime = Date.now();
+        startTurnTimer(myRoom, roomId);
+
         io.to(roomId).emit('play-started', {
-            currentPlayer: myRoom.players[myRoom.currentPlayer].id,
-            started: true
+            currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
+            started: true,
+            turnDeadline: myRoom.turnDeadline,
+            winsToReach: myRoom.winsToReach,
+            maxPlayers: myRoom.max,
+            gameStartTime: myRoom.gameStartTime
         })
     })
 
     socket.on('playRestart', () => {
         const roomId = SOCKET_ROOM_MAPPING[socket.id];
         const myRoom = ROOMS[roomId];
-        if (myRoom.owner !== socket.id) {
+
+        if (!myRoom) {
+            return socket.emit('error', { message: "Room not found, please join again" });
+        }
+
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me || me.playerId !== myRoom.ownerPlayerId) {
             return socket.emit('error', { message: "Only owner can restart the game" })
         }
-        myRoom.currentPlayer = (myRoom.currentPlayer + 1) % myRoom.players.length;
+
+        if (getConnectedCount(myRoom) < 2) {
+            return socket.emit('error', { message: "At least 2 players are required to play" });
+        }
+
+        clearTurnTimer(myRoom);
+        myRoom.currentPlayer = getNextConnectedIndex(myRoom, myRoom.currentPlayer);
+        myRoom.finished = false;
+        myRoom.winners = [];
         myRoom.game.restart();
-        myRoom.players.forEach((player, index) => {
+
+        if (myRoom.tournamentFinished) {
+            myRoom.tournamentFinished = false;
+            myRoom.gameCount = 1;
+            myRoom.players.forEach(p => p.win = 0);
+            myRoom.gameStartTime = Date.now();
+        } else {
+            myRoom.gameCount += 1;
+        }
+
+        myRoom.players.forEach((player) => {
             const board = myRoom.game.prepareBlankChart();
-            myRoom.players[index].board = board;
-            io.to(player.id).emit('play-restart', ({ myBoard: board, selection: myRoom.game.USER_SELECTION, currentPlayer: myRoom.players[myRoom.currentPlayer].id }))
-        })
+            player.board = board;
+            if (player.connected) {
+                io.to(player.id).emit('play-restart', {
+                    myBoard: board,
+                    selection: myRoom.game.USER_SELECTION,
+                    currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
+                    gameCount: myRoom.gameCount,
+                    winsToReach: myRoom.winsToReach,
+                    tournamentFinished: myRoom.tournamentFinished,
+                    gameStartTime: myRoom.gameStartTime,
+                    players: myRoom.players.map(p => serializePlayer(p, myRoom.game))
+                })
+            }
+        });
+        startTurnTimer(myRoom, roomId);
     })
+
+    socket.on('updateConfig', ({ winsToReach }) => {
+        const roomId = SOCKET_ROOM_MAPPING[socket.id];
+        const myRoom = ROOMS[roomId];
+        if (!myRoom) return;
+
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me || me.playerId !== myRoom.ownerPlayerId) {
+            return socket.emit('error', { message: "Only owner can change settings" });
+        }
+        if (myRoom.started && !myRoom.finished) {
+            return socket.emit('error', { message: "Cannot change settings during active game" });
+        }
+
+        if (winsToReach != null) {
+            myRoom.winsToReach = Math.min(Math.max(winsToReach, 1), 51);
+        }
+
+        io.to(roomId).emit('config-updated', {
+            winsToReach: myRoom.winsToReach,
+            maxPlayers: myRoom.max,
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game))
+        });
+    })
+
+    socket.on('chat:message', ({ text }) => {
+        const roomId = SOCKET_ROOM_MAPPING[socket.id];
+        const myRoom = ROOMS[roomId];
+        if (!myRoom) return;
+
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me) return;
+
+        const message = {
+            id: Date.now().toString(36) + Math.random().toString(36).substr(2),
+            playerId: me.playerId,
+            name: me.name,
+            text: String(text).trim().slice(0, 100),
+            timestamp: Date.now()
+        };
+
+        myRoom.chatHistory.push(message);
+        if (myRoom.chatHistory.length > 50) myRoom.chatHistory.shift();
+
+        io.to(roomId).emit('chat:message', message);
+    });
+
+    socket.on('reaction', ({ emoji, targetPlayerId }) => {
+        const roomId = SOCKET_ROOM_MAPPING[socket.id];
+        const myRoom = ROOMS[roomId];
+        if (!myRoom) return;
+
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me) return;
+        if (!emoji || emoji.length > 2) return;
+
+        io.to(roomId).emit('reaction', {
+            emoji,
+            fromPlayerId: me.playerId,
+            fromName: me.name,
+            targetPlayerId: targetPlayerId || null,
+            timestamp: Date.now()
+        });
+    });
 
     socket.on('disconnect', () => {
         const roomId = SOCKET_ROOM_MAPPING[socket.id];
@@ -178,40 +637,54 @@ io.on('connection', (socket) => {
             return;
         }
 
-        const leftPlayer = myRoom.players.find(p => p.id === socket.id);
+        const leftIndex = myRoom.players.findIndex(p => p.id === socket.id);
+        if (leftIndex === -1) return;
 
-        let currentPlayerId = myRoom.players[myRoom.currentPlayer]?.id || null;
-        const nextPlayerId = myRoom.players[(myRoom.currentPlayer + 1) % myRoom.players.length].id
-        const players = myRoom.players.filter(player => player.id !== socket.id);
+        const leftPlayer = myRoom.players[leftIndex];
+        leftPlayer.connected = false;
+        delete SOCKET_ROOM_MAPPING[socket.id];
 
-
-        ROOMS[roomId].players = players;
-
-
-
-        if (players.length === 0) {
-            delete SOCKET_ROOM_MAPPING[socket.id]
-            delete ROOMS[roomId]
+        const connectedCount = getConnectedCount(myRoom);
+        if (connectedCount === 0) {
+            clearTurnTimer(myRoom);
+            delete ROOMS[roomId];
             return;
+        }
+
+        // Handle owner change
+        if (leftPlayer.playerId === myRoom.ownerPlayerId) {
+            const newOwner = myRoom.players.find(p => p.connected);
+            if (newOwner) {
+                myRoom.owner = newOwner.id;
+                myRoom.ownerPlayerId = newOwner.playerId;
+            }
+        }
+
+        // Handle turn — auto-play for disconnected player instead of skipping
+        if (leftIndex === myRoom.currentPlayer) {
+            clearTurnTimer(myRoom);
+            if (myRoom.started && !myRoom.finished) {
+                startTurnTimer(myRoom, roomId);
+            }
+        }
+
+        if (getConnectedCount(myRoom) < 2) {
+            clearTurnTimer(myRoom);
         }
 
         const payload = {
             leftPlayerName: leftPlayer.name,
-            players: Object.values(myRoom.players).map(i => ({ name: i.name, win: i.win, id: i.id })),
+            leftPlayerId: leftPlayer.playerId,
+            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
             selection: myRoom.game.USER_SELECTION,
-            currentPlayer: players.findIndex(p => p.id === currentPlayerId) >= 0 ? currentPlayerId : nextPlayerId
-        }
+            currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
+            owner: myRoom.owner,
+            ownerPlayerId: myRoom.ownerPlayerId,
+            turnDeadline: myRoom.turnDeadline
+        };
 
-        if (leftPlayer.id === myRoom.owner) {
-            myRoom.owner = nextPlayerId;
-            payload.owner = nextPlayerId;
-        }
-
-        io.to(roomId).emit('player-left', payload)
+        io.to(roomId).emit('player-left', payload);
     })
 })
 
-
-
-
-server.listen(3005, console.log(`Server started on port: 3005`))
+server.listen(3004, console.log(`Server started on port: 3004`))

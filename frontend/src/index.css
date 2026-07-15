@@ -22,3 +22,27 @@
   font-style: normal;
 }
 
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Safari fixes */
+html, body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+}
+
+@supports (-webkit-touch-callout: none) {
+  /* iOS specific height fix */
+  .min-h-ios {
+    min-height: -webkit-fill-available;
+  }
+}
+

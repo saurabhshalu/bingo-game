@@ -8,6 +8,7 @@ const App = () => {
       <Routes>
         <Route path="/" Component={Home} />
         <Route path="/game" element={<Game />} />
+        <Route path="/game/:roomId" element={<Game />} />
         <Route path="*" element={<Navigate to={"/"} />} />
       </Routes>
     </SocketContextProvider>

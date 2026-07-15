@@ -52,7 +52,7 @@ const Block = ({
   return (
     <button
       onClick={handleClick}
-      className={`relative w-full h-full aspect-square flex justify-center items-center transition-colors ${
+      className={`relative w-full h-full flex justify-center items-center transition-colors ${
         selection[number] ? "bg-green-400" : "bg-violet-400"
       } ${selection[number] ? "hover:bg-green-400" : "hover:bg-violet-500"}`}
       style={{ cursor: selection[number] ? "default" : "pointer" }}
