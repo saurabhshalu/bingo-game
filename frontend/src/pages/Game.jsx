@@ -235,12 +235,12 @@ const Game = () => {
           {players.map((player) => {
             const isTurn = player.id === currentPlayer;
             const isMe = player.playerId === playerId;
-            const showTimer = isTurn && started && !finished && turnDeadline;
+            const showTimer = isTurn && started && turnDeadline;
             return (
               <div key={player.playerId} className="relative shrink-0 flex flex-col items-center px-1">
                 <div className="relative">
                   {showTimer && (
-                    <TurnTimer deadline={turnDeadline} size={54} strokeWidth={3} />
+                    <TurnTimer deadline={turnDeadline} paused={finished} size={54} strokeWidth={3} />
                   )}
                   <motion.div
                     animate={isTurn && player.connected ? { scale: [1, 0.9, 1] } : {}}

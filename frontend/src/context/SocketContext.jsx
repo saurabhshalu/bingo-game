@@ -269,7 +269,7 @@ const SocketContextProvider = ({ children }) => {
       ));
     });
 
-    socket.on("game-over", ({ winners: w, players: p, selection: s, gameCount: gc, lastMove, lastPlayerId, lastPlayerName, winsToReach: bo, tournamentFinished: tf, tournamentWinners: tw }) => {
+    socket.on("game-over", ({ winners: w, players: p, selection: s, gameCount: gc, lastMove, lastPlayerId, lastPlayerName, turnDeadline: td, winsToReach: bo, tournamentFinished: tf, tournamentWinners: tw }) => {
       setPlayers(p);
       setSelection(s);
       setGameCount(gc);
@@ -284,11 +284,11 @@ const SocketContextProvider = ({ children }) => {
           });
         }, 2000);
       }
+      if (td != null) setTurnDeadline(td);
       if (bo != null) setWinsToReach(bo);
       if (tf != null) setTournamentFinished(tf);
       if (tw != null) setTournamentWinners(tw);
       setFinished(true);
-      setTurnDeadline(null);
 
       const amIWinner = w.some((winner) => winner.playerId === playerId);
       if (amIWinner) {
@@ -300,11 +300,12 @@ const SocketContextProvider = ({ children }) => {
       }
     });
 
-    socket.on("play-restart", ({ myBoard, selection: s, currentPlayer: cp, gameCount: gc, winsToReach: bo, tournamentFinished: tf, gameStartTime: gst, players: p }) => {
+    socket.on("play-restart", ({ myBoard, selection: s, currentPlayer: cp, gameCount: gc, turnDeadline: td, winsToReach: bo, tournamentFinished: tf, gameStartTime: gst, players: p }) => {
       setBoard(myBoard);
       setSelection(s);
       setCurrentPlayer(cp);
       setGameCount(gc);
+      if (td != null) setTurnDeadline(td);
       if (p != null) setPlayers(p);
       setWinners([]);
       setFinished(false);

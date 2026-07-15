@@ -117,6 +117,13 @@ const clearTurnTimer = (room) => {
     room.turnDeadline = null;
 };
 
+const pauseTurnTimer = (room) => {
+    if (room.turnTimer) {
+        clearTimeout(room.turnTimer);
+        room.turnTimer = null;
+    }
+};
+
 const startTurnTimer = (room, roomId) => {
     clearTurnTimer(room);
     if (getConnectedCount(room) < 2) return;
@@ -175,7 +182,7 @@ const handleAutoRandomMove = (roomId) => {
 
     const actingPlayer = myRoom.players[myRoom.currentPlayer];
     const winners = getWinners(myRoom);
-    clearTurnTimer(myRoom);
+    pauseTurnTimer(myRoom);
 
     if (winners.length > 0) {
         myRoom.finished = true;
@@ -193,6 +200,7 @@ const handleAutoRandomMove = (roomId) => {
             isRandom: true,
             winsToReach: myRoom.winsToReach,
             tournamentFinished: myRoom.tournamentFinished,
+            turnDeadline: myRoom.turnDeadline,
             tournamentWinners: tournamentWinners ? tournamentWinners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId })) : null
         });
     }
@@ -383,7 +391,7 @@ io.on('connection', (socket) => {
         }
 
         const winners = getWinners(myRoom);
-        clearTurnTimer(myRoom);
+        pauseTurnTimer(myRoom);
 
         if (winners.length > 0) {
             myRoom.finished = true;
@@ -399,6 +407,7 @@ io.on('connection', (socket) => {
                 lastPlayerId: me?.playerId,
                 lastPlayerName: me?.name,
                 isRandom: false,
+                turnDeadline: myRoom.turnDeadline,
                 winsToReach: myRoom.winsToReach,
                 tournamentFinished: myRoom.tournamentFinished,
                 tournamentWinners: tournamentWinners ? tournamentWinners.map(i => ({ id: i.id, name: i.name, win: i.win, playerId: i.playerId })) : null
@@ -555,6 +564,7 @@ io.on('connection', (socket) => {
                     selection: myRoom.game.USER_SELECTION,
                     currentPlayer: myRoom.players[myRoom.currentPlayer]?.id,
                     gameCount: myRoom.gameCount,
+                    turnDeadline: myRoom.turnDeadline,
                     winsToReach: myRoom.winsToReach,
                     tournamentFinished: myRoom.tournamentFinished,
                     gameStartTime: myRoom.gameStartTime,

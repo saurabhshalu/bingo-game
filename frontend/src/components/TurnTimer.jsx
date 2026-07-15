@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-const TurnTimer = ({ deadline, size = 58, strokeWidth = 3 }) => {
+const TurnTimer = ({ deadline, paused = false, size = 58, strokeWidth = 3 }) => {
   const [progress, setProgress] = useState(1);
   const [remaining, setRemaining] = useState(15000);
 
@@ -18,9 +18,10 @@ const TurnTimer = ({ deadline, size = 58, strokeWidth = 3 }) => {
       setRemaining(rem);
     };
     tick();
+    if (paused) return;
     const interval = setInterval(tick, 100);
     return () => clearInterval(interval);
-  }, [deadline]);
+  }, [deadline, paused]);
 
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
