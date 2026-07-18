@@ -254,6 +254,7 @@ const joinRoom = (socket, roomId, player, isRejoin = false) => {
             maxPlayers: myRoom.max,
             winsToReach: myRoom.winsToReach,
             tournamentFinished: myRoom.tournamentFinished,
+            tournamentWinners: myRoom.tournamentWinners,
             gameStartTime: myRoom.gameStartTime
         });
 
@@ -331,7 +332,8 @@ io.on('connection', (socket) => {
             chatHistory: [],
             turnTimer: null,
             turnDeadline: null,
-            gameStartTime: null
+            gameStartTime: null,
+            voteKick: null
         }
 
         joinRoom(socket, roomId, player, false);
@@ -443,47 +445,172 @@ io.on('connection', (socket) => {
         handleAutoRandomMove(roomId);
     });
 
-    socket.on('kickPlayer', ({ targetPlayerId }) => {
+    const handleVoteKickEnd = (roomId) => {
+        const myRoom = ROOMS[roomId];
+        if (!myRoom || !myRoom.voteKick) return;
+
+        const { targetPlayerId, targetName, votes, timer } = myRoom.voteKick;
+
+        // Clear the scheduled timeout (in case called early)
+        if (timer) clearTimeout(timer);
+
+        // Owner auto-votes YES
+        let yesCount = 1;
+        let noCount = 0;
+        for (const [, vote] of votes) {
+            if (vote) yesCount++;
+            else noCount++;
+        }
+
+        const removed = yesCount > noCount;
+
+        if (removed) {
+            const targetIdx = myRoom.players.findIndex(p => p.playerId === targetPlayerId);
+            if (targetIdx !== -1) {
+                const target = myRoom.players[targetIdx];
+
+                if (target.connected && target.id) {
+                    delete SOCKET_ROOM_MAPPING[target.id];
+                    const targetSocket = io.sockets.sockets.get(target.id);
+                    if (targetSocket) {
+                        targetSocket.emit('you-were-kicked', { targetName, reason: 'voted_out' });
+                        targetSocket.disconnect();
+                    }
+                }
+
+                myRoom.players.splice(targetIdx, 1);
+
+                if (targetIdx < myRoom.currentPlayer) {
+                    myRoom.currentPlayer -= 1;
+                }
+                if (myRoom.currentPlayer >= myRoom.players.length) {
+                    myRoom.currentPlayer = 0;
+                }
+
+                if (myRoom.players.length === 0) {
+                    delete ROOMS[roomId];
+                    return;
+                }
+            }
+        }
+
+        io.to(roomId).emit('vote-kick-ended', {
+            targetPlayerId,
+            targetName,
+            removed,
+            yesCount,
+            noCount,
+            players: removed ? myRoom.players.map(p => serializePlayer(p, myRoom.game)) : undefined,
+            currentPlayer: removed ? myRoom.players[myRoom.currentPlayer]?.id || null : undefined,
+            ownerPlayerId: myRoom.ownerPlayerId
+        });
+
+        myRoom.voteKick = null;
+
+        // Always reset turn timer for current player after vote
+        if (myRoom.started && !myRoom.finished && getConnectedCount(myRoom) >= 2) {
+            startTurnTimer(myRoom, roomId);
+            // Broadcast the fresh turnDeadline to everyone
+            io.to(roomId).emit('turn-resumed', { turnDeadline: myRoom.turnDeadline, currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null });
+        }
+    };
+
+    socket.on('initiateVoteKick', ({ targetPlayerId }) => {
         const roomId = SOCKET_ROOM_MAPPING[socket.id];
         const myRoom = ROOMS[roomId];
         if (!myRoom) return;
 
         const me = myRoom.players.find(p => p.id === socket.id);
         if (!me || me.playerId !== myRoom.ownerPlayerId) {
-            return socket.emit('error', { message: "Only owner can kick players" });
+            return socket.emit('error', { message: "Only owner can initiate vote kick" });
+        }
+        if (me.playerId === targetPlayerId) {
+            return socket.emit('error', { message: "Cannot vote kick yourself" });
+        }
+        if (myRoom.voteKick) {
+            return socket.emit('error', { message: "A vote is already in progress" });
         }
 
-        const targetIdx = myRoom.players.findIndex(p => p.playerId === targetPlayerId);
-        if (targetIdx === -1) return;
-        const target = myRoom.players[targetIdx];
-        if (target.connected) {
-            return socket.emit('error', { message: "Can only kick disconnected players" });
-        }
+        const target = myRoom.players.find(p => p.playerId === targetPlayerId);
+        if (!target) return socket.emit('error', { message: "Player not found" });
 
-        // Remove player
-        myRoom.players.splice(targetIdx, 1);
+        const voteDuration = 30000;
+        const deadline = Date.now() + voteDuration;
 
-        // Adjust currentPlayer index if needed
-        if (targetIdx < myRoom.currentPlayer) {
-            myRoom.currentPlayer -= 1;
-        }
-        if (myRoom.currentPlayer >= myRoom.players.length) {
-            myRoom.currentPlayer = 0;
-        }
+        pauseTurnTimer(myRoom);
 
-        if (myRoom.players.length === 0) {
-            delete ROOMS[roomId];
-            return;
-        }
+        myRoom.voteKick = {
+            targetPlayerId,
+            targetName: target.name,
+            votes: new Map(),
+            deadline,
+            timer: setTimeout(() => handleVoteKickEnd(roomId), voteDuration)
+        };
 
-        io.to(roomId).emit('player-kicked', {
-            kickedName: target.name,
-            kickedPlayerId: target.playerId,
-            players: myRoom.players.map(p => serializePlayer(p, myRoom.game)),
-            currentPlayer: myRoom.players[myRoom.currentPlayer]?.id || null,
-            selection: myRoom.game.USER_SELECTION,
-            ownerPlayerId: myRoom.ownerPlayerId
+        io.to(roomId).emit('vote-kick-started', {
+            targetPlayerId,
+            targetName: target.name,
+            targetColor: target.color,
+            targetAvatar: target.avatar || null,
+            deadline,
+            initiatorId: me.playerId,
+            initiatorName: me.name
         });
+    });
+
+    socket.on('castVoteKick', ({ targetPlayerId, vote }) => {
+        const roomId = SOCKET_ROOM_MAPPING[socket.id];
+        const myRoom = ROOMS[roomId];
+        if (!myRoom || !myRoom.voteKick) return;
+        if (myRoom.voteKick.targetPlayerId !== targetPlayerId) return;
+
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me) return;
+        if (me.playerId === myRoom.voteKick.targetPlayerId) return;
+        if (me.playerId === myRoom.ownerPlayerId) return;
+        if (myRoom.voteKick.votes.has(me.playerId)) return;
+
+        myRoom.voteKick.votes.set(me.playerId, vote === true);
+
+        const totalEligible = myRoom.players.filter(p => p.playerId !== myRoom.ownerPlayerId && p.playerId !== targetPlayerId).length;
+        const allVoted = myRoom.voteKick.votes.size >= totalEligible;
+
+        io.to(roomId).emit('vote-kick-updated', {
+            targetPlayerId,
+            yesCount: 1 + [...myRoom.voteKick.votes.values()].filter(v => v).length,
+            noCount: [...myRoom.voteKick.votes.values()].filter(v => !v).length,
+            totalVoters: totalEligible
+        });
+
+        // End early if all eligible voters have cast their vote
+        if (allVoted) {
+            handleVoteKickEnd(roomId);
+        }
+    });
+
+    socket.on('cancelVoteKick', () => {
+        const roomId = SOCKET_ROOM_MAPPING[socket.id];
+        const myRoom = ROOMS[roomId];
+        if (!myRoom || !myRoom.voteKick) return;
+
+        const me = myRoom.players.find(p => p.id === socket.id);
+        if (!me || me.playerId !== myRoom.ownerPlayerId) return;
+
+        if (myRoom.voteKick.timer) clearTimeout(myRoom.voteKick.timer);
+        const targetName = myRoom.voteKick.targetName;
+        const targetPlayerId = myRoom.voteKick.targetPlayerId;
+        myRoom.voteKick = null;
+
+        io.to(roomId).emit('vote-kick-cancelled', {
+            targetPlayerId,
+            targetName,
+            reason: 'cancelled'
+        });
+
+        // Resume game timer
+        if (myRoom.started && !myRoom.finished && getConnectedCount(myRoom) >= 2 && !myRoom.turnTimer) {
+            startTurnTimer(myRoom, roomId);
+        }
     });
 
     socket.on('playStart', () => {
@@ -555,6 +682,8 @@ io.on('connection', (socket) => {
             myRoom.gameCount += 1;
         }
 
+        startTurnTimer(myRoom, roomId);
+
         myRoom.players.forEach((player) => {
             const board = myRoom.game.prepareBlankChart();
             player.board = board;
@@ -572,7 +701,6 @@ io.on('connection', (socket) => {
                 })
             }
         });
-        startTurnTimer(myRoom, roomId);
     })
 
     socket.on('updateConfig', ({ winsToReach }) => {
@@ -680,6 +808,19 @@ io.on('connection', (socket) => {
 
         if (getConnectedCount(myRoom) < 2) {
             clearTurnTimer(myRoom);
+        }
+
+        // Cancel active vote kick if owner or target left
+        if (myRoom.voteKick) {
+            if (leftPlayer.playerId === myRoom.ownerPlayerId || leftPlayer.playerId === myRoom.voteKick.targetPlayerId) {
+                clearTimeout(myRoom.voteKick.timer);
+                io.to(roomId).emit('vote-kick-cancelled', {
+                    targetPlayerId: myRoom.voteKick.targetPlayerId,
+                    targetName: myRoom.voteKick.targetName,
+                    reason: leftPlayer.playerId === myRoom.ownerPlayerId ? 'owner_left' : 'target_left'
+                });
+                myRoom.voteKick = null;
+            }
         }
 
         const payload = {

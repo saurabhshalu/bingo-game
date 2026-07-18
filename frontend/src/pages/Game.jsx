@@ -14,6 +14,36 @@ import { LogOut } from "lucide-react";
 import { audioManager } from "../helper/audio.js";
 import ConfettiEffect from "../components/ConfettiEffect.jsx";
 
+const VoteKickCountdown = ({ deadline, yesCount, noCount, totalDuration = 30000 }) => {
+  const [remaining, setRemaining] = useState(Math.max(0, deadline - Date.now()));
+  useEffect(() => {
+    const tick = () => setRemaining(Math.max(0, deadline - Date.now()));
+    const interval = setInterval(tick, 50);
+    return () => clearInterval(interval);
+  }, [deadline]);
+  const progress = Math.max(0, Math.min(1, remaining / totalDuration));
+  const seconds = Math.ceil(remaining / 1000);
+  return (
+    <div className="w-full">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-white text-xs font-medium">Voting ends in <span className="text-amber-300 font-bold">{seconds}s</span></span>
+        <div className="flex gap-3 text-xs">
+          <span className="text-green-400 font-bold">✅ {yesCount}</span>
+          <span className="text-red-400 font-bold">❌ {noCount}</span>
+        </div>
+      </div>
+      <div className="h-2.5 w-full bg-neutral-700 rounded-full overflow-hidden">
+        <motion.div
+          className="h-full rounded-full"
+          style={{ backgroundColor: progress > 0.5 ? '#22C55E' : progress > 0.25 ? '#EAB308' : '#EF4444' }}
+          animate={{ width: `${progress * 100}%` }}
+          transition={{ duration: 0.05 }}
+        />
+      </div>
+    </div>
+  );
+};
+
 const getCorrectAnswerList = (size = 5) => {
   const answers = { horizontal: [], vertical: [], diagonal1: [], diagonal2: [] };
   for (let i = 0; i < size; i++) {
@@ -56,11 +86,13 @@ const Game = () => {
     started, finished, winners, gameCount, playerId, ownerPlayerId,
     connectedCount, loading, turnDeadline, reactions, chatFlashes, recentMoves,
     winsToReach, tournamentFinished, tournamentWinners, gameStartTime, updateConfig,
-    sendReaction, playRandom, kickPlayer,
+    sendReaction, playRandom, initiateVoteKick, castVoteKick, cancelVoteKick, voteKick,
   } = useContext(SocketContext);
 
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [showExitDialog, setShowExitDialog] = useState(false);
+  const [confirmVoteTarget, setConfirmVoteTarget] = useState(null);
+  const [votedKick, setVotedKick] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const prevBingoLength = useRef(0);
   const hasActedRef = useRef(false);
@@ -80,6 +112,13 @@ const Game = () => {
     prevBingoLength.current = BINGO_LENGTH;
   }, [BINGO_LENGTH]);
 
+  // Reset local vote-kick state when a new vote starts
+  useEffect(() => {
+    if (voteKick && !voteKick.voteResult) {
+      setVotedKick(false);
+    }
+  }, [voteKick?.targetPlayerId]);
+
   // Auto-scroll to top when virtual keyboard closes (mobile)
   useEffect(() => {
     const vv = window.visualViewport;
@@ -98,12 +137,13 @@ const Game = () => {
 
   // Elapsed game timer
   useEffect(() => {
-    if (!gameStartTime || tournamentFinished) { setElapsedTime(0); return; }
+    if (!gameStartTime) { setElapsedTime(0); return; }
     const tick = () => setElapsedTime(Math.floor((Date.now() - gameStartTime) / 1000));
     tick();
+    if (tournamentFinished || connectedCount < 2) return; // freeze when waiting
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [gameStartTime, tournamentFinished]);
+  }, [gameStartTime, tournamentFinished, connectedCount]);
 
   const formatElapsed = (sec) => {
     const m = Math.floor(sec / 60).toString().padStart(2, "0");
@@ -114,7 +154,7 @@ const Game = () => {
   // 10s turn timer — auto-play random when expired
   useEffect(() => {
     hasActedRef.current = false; // fresh turn
-    if (!turnDeadline || !started || finished || !currentPlayer) return;
+    if (!turnDeadline || !started || finished || !currentPlayer || connectedCount < 2 || voteKick) return;
     const me = players.find((p) => p.playerId === playerId);
     if (!me || me.id !== currentPlayer) return;
     const interval = setInterval(() => {
@@ -122,7 +162,7 @@ const Game = () => {
       if (Date.now() >= turnDeadline) { hasActedRef.current = true; playRandom(); }
     }, 200);
     return () => clearInterval(interval);
-  }, [turnDeadline, started, finished, currentPlayer, playerId, players, playRandom]);
+  }, [turnDeadline, started, finished, currentPlayer, playerId, players, playRandom, connectedCount, voteKick]);
 
   const playMove = useCallback((number) => {
     hasActedRef.current = true; // prevent timer from firing after manual move
@@ -235,7 +275,7 @@ const Game = () => {
           {players.map((player) => {
             const isTurn = player.id === currentPlayer;
             const isMe = player.playerId === playerId;
-            const showTimer = isTurn && started && turnDeadline;
+            const showTimer = isTurn && started && turnDeadline && !tournamentFinished && !voteKick && connectedCount >= 2;
             return (
               <div key={player.playerId} className="relative shrink-0 flex flex-col items-center px-1">
                 <div className="relative">
@@ -284,14 +324,14 @@ const Game = () => {
                     }
                     return null;
                   })()}
-                  {!player.connected && (
+                  {isOwner && !isMe && (
                     <div className="absolute -bottom-0.5 -right-0.5 flex items-center">
-                      <div className="w-3 h-3 bg-red-500 rounded-full border-2 border-gray-900" />
-                      {isOwner && !started && (
-                        <button onClick={() => kickPlayer(player.playerId)}
-                          className="w-4 h-4 bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center border border-gray-900 ml-0.5 text-white text-[9px] font-bold"
-                          title={`Kick ${player.name}`}>×</button>
+                      {!player.connected && (
+                        <div className="w-3 h-3 bg-red-500 rounded-full border-2 border-gray-900" />
                       )}
+                      <button onClick={() => setConfirmVoteTarget(player)}
+                        className="w-4 h-4 bg-red-600 hover:bg-red-500 rounded-full flex items-center justify-center border border-gray-900 ml-0.5 text-white text-[9px] font-bold"
+                        title={`Vote to remove ${player.name}`}>×</button>
                     </div>
                   )}
                 </div>
@@ -454,6 +494,138 @@ const Game = () => {
                   </button>
                 ))}
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Vote Kick Confirmation Dialog */}
+      <AnimatePresence>
+        {confirmVoteTarget && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+            style={{ WebkitBackdropFilter: 'blur(4px)' }}
+            onClick={() => setConfirmVoteTarget(null)}>
+            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} exit={{ scale: 0.9 }}
+              className="bg-neutral-800 border border-neutral-600 rounded-xl p-6 shadow-2xl max-w-xs w-full mx-4 text-center"
+              onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-white font-bold text-lg mb-1">Vote to Remove?</h3>
+              <p className="text-neutral-300 text-sm mb-5">
+                Start a 30-second vote to remove <b>{confirmVoteTarget.name}</b> from the room.
+              </p>
+              <div className="flex gap-3 justify-center">
+                <button onClick={() => setConfirmVoteTarget(null)}
+                  className="px-4 py-2 rounded-md bg-neutral-600 hover:bg-neutral-500 text-white text-sm font-medium transition-colors">
+                  Cancel
+                </button>
+                <button onClick={() => { initiateVoteKick(confirmVoteTarget.playerId); setConfirmVoteTarget(null); }}
+                  className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-500 text-white text-sm font-medium transition-colors">
+                  Start Vote
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Active Vote Kick Dialog */}
+      <AnimatePresence>
+        {voteKick && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center"
+            style={{ WebkitBackdropFilter: 'blur(6px)' }}>
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+              className="bg-neutral-800 border border-neutral-600 rounded-2xl p-6 shadow-2xl max-w-sm w-full mx-4 text-center">
+
+              {!voteKick.voteResult ? (
+                <>
+                  {/* Target Avatar */}
+                  <div className="flex justify-center mb-3">
+                    <div className="relative">
+                      <div className="w-16 h-16 rounded-full flex items-center justify-center text-xl font-bold text-white shadow-lg ring-4 ring-red-500/40"
+                        style={{ backgroundColor: voteKick.targetColor || '#EF4444' }}>
+                        {voteKick.targetAvatar ? (
+                          <span className="text-3xl">{voteKick.targetAvatar}</span>
+                        ) : (
+                          voteKick.targetName?.split(" ").map((i) => i[0]).join("")
+                        )}
+                      </div>
+                      <div className="absolute -bottom-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full border border-neutral-800">
+                        KICK
+                      </div>
+                    </div>
+                  </div>
+
+                  <h3 className="text-white font-bold text-lg mb-0.5">Vote in Progress</h3>
+                  <p className="text-neutral-400 text-sm mb-4">
+                    {playerId === voteKick.targetPlayerId
+                      ? "Players are voting to remove you from the room."
+                      : isOwner
+                        ? `You initiated a vote to remove ${voteKick.targetName}.`
+                        : `Remove ${voteKick.targetName} from the room?`}
+                  </p>
+
+                  {isOwner && (
+                    <div className="text-green-400 text-sm font-medium mb-4 bg-green-500/10 rounded-lg py-2">
+                      ✅ You voted YES (owner)
+                    </div>
+                  )}
+
+                  {playerId !== voteKick.targetPlayerId && !isOwner && !votedKick && (
+                    <div className="flex gap-3 justify-center mb-4">
+                      <button onClick={() => { castVoteKick(voteKick.targetPlayerId, false); setVotedKick(true); }}
+                        className="flex-1 max-w-[100px] py-2.5 rounded-xl bg-neutral-700 hover:bg-neutral-600 text-white text-sm font-bold transition-all active:scale-95 border border-neutral-600">
+                        ❌ NO
+                      </button>
+                      <button onClick={() => { castVoteKick(voteKick.targetPlayerId, true); setVotedKick(true); }}
+                        className="flex-1 max-w-[100px] py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-bold transition-all active:scale-95 shadow-lg shadow-red-500/20">
+                        ✅ YES
+                      </button>
+                    </div>
+                  )}
+
+                  {playerId !== voteKick.targetPlayerId && !isOwner && votedKick && (
+                    <div className="text-neutral-400 text-sm mb-4 py-2 bg-neutral-700/40 rounded-lg">
+                      🗳️ You have voted. Waiting for others…
+                    </div>
+                  )}
+
+                  {voteKick.targetPlayerId === playerId && (!voteKick.voteResult) && (
+                    <div className="text-amber-300 text-sm mb-4 py-2 bg-amber-500/10 rounded-lg">
+                      ⌛ 30-second vote in progress…
+                    </div>
+                  )}
+
+                  {voteKick.deadline && (
+                    <VoteKickCountdown deadline={voteKick.deadline} yesCount={voteKick.yesCount} noCount={voteKick.noCount} totalDuration={30000} />
+                  )}
+
+                  {isOwner && (
+                    <button onClick={() => cancelVoteKick()}
+                      className="mt-4 text-xs text-neutral-500 hover:text-red-400 underline underline-offset-2 transition-colors">
+                      Cancel this vote
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 ${voteKick.voteResult.removed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                    {voteKick.voteResult.removed ? '✅' : '❌'}
+                  </div>
+                  <h3 className="text-white font-bold text-xl mb-1">
+                    {voteKick.voteResult.removed ? 'Player Removed' : 'Vote Rejected'}
+                  </h3>
+                  <p className="text-neutral-400 text-sm mb-3">
+                    {voteKick.voteResult.removed
+                      ? <><b className="text-white">{voteKick.targetName}</b> was voted out of the room.</>
+                      : <>Vote to remove <b className="text-white">{voteKick.targetName}</b> was rejected.</>}
+                  </p>
+                  <div className="flex justify-center gap-4 text-sm">
+                    <span className="text-green-400 font-bold bg-green-500/10 px-3 py-1 rounded-full">YES {voteKick.voteResult.yesCount}</span>
+                    <span className="text-red-400 font-bold bg-red-500/10 px-3 py-1 rounded-full">NO {voteKick.voteResult.noCount}</span>
+                  </div>
+                </>
+              )}
             </motion.div>
           </motion.div>
         )}

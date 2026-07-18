@@ -22,6 +22,7 @@ const socketInitialState = {
   name: "",
   connectedCount: 0,
   turnDeadline: null,
+  voteKick: null,
   loading: true,
 };
 
@@ -54,6 +55,7 @@ const SocketContextProvider = ({ children }) => {
   const [tournamentFinished, setTournamentFinished] = useState(false);
   const [tournamentWinners, setTournamentWinners] = useState([]);
   const [gameStartTime, setGameStartTime] = useState(null);
+  const [voteKick, setVoteKick] = useState(null);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState(() => localStorage.getItem("bingo_player_name") || "");
   const [playerId] = useState(() => {
@@ -175,6 +177,7 @@ const SocketContextProvider = ({ children }) => {
       maxPlayers: mp,
       winsToReach: bo,
       tournamentFinished: tf,
+      tournamentWinners: tw,
       gameStartTime: gst,
     }) => {
       setBoard(myBoard);
@@ -192,6 +195,7 @@ const SocketContextProvider = ({ children }) => {
       if (mp != null) setMaxPlayers(mp);
       if (bo != null) setWinsToReach(bo);
       if (tf != null) setTournamentFinished(tf);
+      if (tw != null) setTournamentWinners(tw);
       if (gst != null) setGameStartTime(gst);
       setLoading(false);
       navigate(`/game/${rid}`, { replace: true });
@@ -284,7 +288,7 @@ const SocketContextProvider = ({ children }) => {
           });
         }, 2000);
       }
-      if (td != null) setTurnDeadline(td);
+      setTurnDeadline(td ?? null);
       if (bo != null) setWinsToReach(bo);
       if (tf != null) setTournamentFinished(tf);
       if (tw != null) setTournamentWinners(tw);
@@ -305,7 +309,7 @@ const SocketContextProvider = ({ children }) => {
       setSelection(s);
       setCurrentPlayer(cp);
       setGameCount(gc);
-      if (td != null) setTurnDeadline(td);
+      setTurnDeadline(td ?? null);
       if (p != null) setPlayers(p);
       setWinners([]);
       setFinished(false);
@@ -341,6 +345,56 @@ const SocketContextProvider = ({ children }) => {
       if (p != null) setPlayers(p);
     });
 
+    socket.on("vote-kick-started", ({ targetPlayerId, targetName, targetColor, targetAvatar, deadline }) => {
+      setVoteKick({ targetPlayerId, targetName, targetColor, targetAvatar, deadline, voteResult: null, yesCount: 1, noCount: 0 });
+    });
+
+    socket.on("vote-kick-updated", ({ targetPlayerId, yesCount, noCount }) => {
+      setVoteKick((prev) => {
+        if (!prev || prev.targetPlayerId !== targetPlayerId) return prev;
+        return { ...prev, yesCount, noCount };
+      });
+    });
+
+    socket.on("vote-kick-ended", ({ targetPlayerId, targetName, removed, yesCount, noCount, players: p, currentPlayer: cp, ownerPlayerId: oid }) => {
+      setVoteKick((prev) => {
+        if (!prev || prev.targetPlayerId !== targetPlayerId) return prev;
+        return { ...prev, voteResult: { removed, yesCount, noCount }, deadline: null };
+      });
+      if (removed) {
+        if (p != null) setPlayers(p);
+        if (cp != null) setCurrentPlayer(cp);
+        if (oid != null) setOwnerPlayerId(oid);
+        toast.success(`✅ ${targetName} was voted out (${yesCount}-${noCount})`);
+      } else {
+        toast.error(`❌ Vote to remove ${targetName} rejected (${yesCount}-${noCount})`);
+      }
+      setTimeout(() => setVoteKick(null), 4000);
+    });
+
+    socket.on("vote-kick-cancelled", ({ targetName, reason }) => {
+      setVoteKick(null);
+      if (reason === 'cancelled') {
+        toast(`Vote to remove ${targetName} cancelled by owner`);
+      } else if (reason === 'owner_left') {
+        toast(`Vote to remove ${targetName} cancelled — owner left`);
+      } else {
+        toast(`Vote to remove ${targetName} cancelled — player left`);
+      }
+    });
+
+    socket.on("turn-resumed", ({ turnDeadline: td, currentPlayer: cp }) => {
+      if (td != null) setTurnDeadline(td);
+      if (cp != null) setCurrentPlayer(cp);
+    });
+
+    socket.on("you-were-kicked", () => {
+      toast.error("You have been voted out of the room. Redirecting…");
+      setTimeout(() => {
+        window.location.href = "/";
+      }, 3000);
+    });
+
     return () => {
       socket.disconnect();
     };
@@ -360,8 +414,16 @@ const SocketContextProvider = ({ children }) => {
     socketRef.current?.emit("playRandom");
   };
 
-  const kickPlayer = (targetPlayerId) => {
-    socketRef.current?.emit("kickPlayer", { targetPlayerId });
+  const cancelVoteKick = () => {
+    socketRef.current?.emit("cancelVoteKick");
+  };
+
+  const initiateVoteKick = (targetPlayerId) => {
+    socketRef.current?.emit("initiateVoteKick", { targetPlayerId });
+  };
+
+  const castVoteKick = (targetPlayerId, vote) => {
+    socketRef.current?.emit("castVoteKick", { targetPlayerId, vote });
   };
 
   const updateConfig = (config) => {
@@ -396,11 +458,14 @@ const SocketContextProvider = ({ children }) => {
         setName,
         connectedCount,
         turnDeadline,
+        voteKick,
         loading,
         sendChatMessage,
         sendReaction,
         playRandom,
-        kickPlayer,
+        initiateVoteKick,
+        castVoteKick,
+        cancelVoteKick,
         updateConfig,
       }}
     >
